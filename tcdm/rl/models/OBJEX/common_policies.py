@@ -36,8 +36,6 @@ from stable_baselines3.common.torch_layers import (
 from stable_baselines3.common.type_aliases import Schedule
 from stable_baselines3.common.utils import get_device, is_vectorized_observation, obs_as_tensor
 
-from jax import numpy as jp
-
 class BaseModel(nn.Module, ABC):
     """
     The base model object: makes predictions in response to observations.
@@ -575,9 +573,7 @@ class ActorCriticPolicy(BasePolicy):
         (distribution, _), _, _ = self._get_action_dist_from_latent(latent_pi, obs, latent_sde=latent_sde)
         actions = distribution.get_actions(deterministic=deterministic)
         log_prob = distribution.log_prob(actions)
-        return actions, values, log_prob, distribution
-    
-    # def _get_synergies()
+        return actions, values, log_prob
 
     def _get_latent(self, obs: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
@@ -610,17 +606,10 @@ class ActorCriticPolicy(BasePolicy):
         # mean_actions, log_std = self.action_net(latent_pi).chunk(2, dim=-1)
         mean_actions_and_zlogstd = self.action_net(latent_pi)
 
-        mean_actions = th.tanh(mean_actions_and_zlogstd[..., :self.action_dim])*(1.-1e-3)
+        mean_actions = th.tanh(mean_actions_and_zlogstd[..., :self.action_dim])
         zlog_std = mean_actions_and_zlogstd[..., self.action_dim:]
 
-        # note the channel is treated as a fixed array (no gradients)
-        jax_mean_actions = jp.array(mean_actions.contiguous().detach()).astype(jp.float32)
-        jax_obs = jp.array(obs).astype(jp.float32)
-        jax_channel = self.jit_batch_get_channel(jax_mean_actions, jax_obs)
-        numpy_channel = np.array(jax_channel.block_until_ready())
-        # numpy_channel = np.array(jax_channel)
-        channel = th.from_numpy(numpy_channel).to('cuda')
-        # channel = th.randn(mean_actions_and_zlogstd.shape[0], self.action_dim, 6).to(mean_actions_and_zlogstd.device)
+        channel = self.get_synergies(mean_actions, obs, self.dynamics.model)
 
         if isinstance(self.action_dist, FullGaussianDistribution):
             # return self.action_dist.proba_distribution(mean_actions, self.zlog_std, self.log_std, channel), mean_actions_and_zlogstd[..., :self.action_dim], channel

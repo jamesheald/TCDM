@@ -3,10 +3,6 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import os
-os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false' # 'This disables the preallocation behavior. JAX will instead allocate GPU memory as needed, potentially decreasing the overall memory usage.' - defo seems slower but sometimes prevents memory crashes
-# os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.2"  # Optional: limit JAX to ~40% of GPU 
-
 import traceback
 import hydra, wandb, yaml, os
 from tcdm.rl import trainers
@@ -72,8 +68,6 @@ def train(cfg: DictConfig):
             trainers.ppo_trainer(cfg, resume_model)
         elif cfg.agent.name == 'OBJEX_PPO':
             trainers.objex_ppo_trainer(cfg, resume_model)
-        elif cfg.agent.name == 'PPO_jax':
-            trainers.ppo_jax_trainer(cfg, resume_model)
         elif cfg.agent.name == 'SAC':
             trainers.sac_trainer(cfg, resume_model)
         else:

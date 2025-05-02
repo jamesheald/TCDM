@@ -6,7 +6,10 @@ import numpy as np
 import torch as th
 
 from stable_baselines3.common.base_class import BaseAlgorithm
-from stable_baselines3.common.buffers import DictRolloutBuffer, RolloutBuffer
+# from stable_baselines3.common.buffers import DictRolloutBuffer, RolloutBuffer
+from stable_baselines3.common.buffers import DictRolloutBuffer
+from tcdm.rl.models.OBJEX.common_buffers import RolloutBuffer
+
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.policies import BasePolicy#, ActorCriticPolicy
 from tcdm.rl.models.OBJEX.common_policies import ActorCriticPolicy
@@ -14,91 +17,62 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import obs_as_tensor, safe_mean
 from stable_baselines3.common.vec_env import VecEnv
 
-from mujoco import mjx
-import jax
-from jax import numpy as jp
-from functools import partial
-import flax.linen as nn
-from mujoco.mjx._src import support
-from typing import List
+from copy import deepcopy
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import List, Type
+from torch.func import vmap, jacrev
 
-class BranchedComputationModule(nn.Module):
-    num_branches: int
-    num_geoms: int
-    object_body_id: List
-    adroit_bodies: List
+class Synergies(nn.Module):
+    def __init__(self, use_gram_schmidt=False):
+        super().__init__()
+        self.use_gram_schmidt = use_gram_schmidt
 
-    def setup(self):
+    def modified_gram_schmidt(self, vectors: th.Tensor, eps=1e-8) -> th.Tensor:
+        """
+        adapted from https://github.com/tensorflow/probability/blob/main/tensorflow_probability/python/math/gram_schmidt.py
+        fundamental change: while_loop replaced with scan
+        Args:
+        vectors: A Tensor of shape `[d, n]` of `d`-dim column vectors to
+            orthonormalize.
 
-        # https://github.com/google-deepmind/mujoco/issues/1555
-        def decode_pyramid(pyramid, condim):
-            """Converts pyramid representation to contact force."""
-            normal_force = abs(jax.lax.cond(condim == 1, lambda pyramid: pyramid[0], lambda pyramid: pyramid[0 : 2 * (condim - 1)].sum(), pyramid))
-            return normal_force
+        Returns:
+        A Tensor of shape `[d, n]` corresponding to the orthonormalization.
+        """
+        vectors = vectors.clone()
+        num_vectors = vectors.shape[1]
+        for i in range(num_vectors - 1):
+            v_i = vectors[:, i]
+            norm = th.norm(v_i)
+            u = th.nan_to_num(v_i / (norm + eps))
+            weights = th.matmul(u, vectors)  # shape: [n]
+            mask = th.arange(num_vectors, device=vectors.device) > i
+            masked_weights = th.where(mask, weights, th.zeros_like(weights))
+            vectors = vectors - th.ger(u, masked_weights)
+        vec_norm = th.norm(vectors, dim=0, keepdim=True)
+        return th.nan_to_num(vectors / (vec_norm + eps))
+    
+    def dynamics_forward_pass(self, linearization_point, obs, dynamics):
+        obs = obs.unsqueeze(0)
+        action = linearization_point.unsqueeze(0)
+        y_prime_mean, _ = dynamics(obs, action)
+        return y_prime_mean.squeeze(0)
 
-        # self.branches = [partial(decode_pyramid, condim=j+1) for j in range(self.num_branches)]
-        # self.branch_switcher = partial(jax.lax.switch, branches=self.branches)
-        self.branches = [partial(decode_pyramid, condim=j) for j in [1,3,4]]
-        self.branch_switcher = lambda condim, pyramid: jax.lax.switch(condim, self.branches, pyramid)
+    def get_synergies(self, linearization_point, obs, dynamics):
 
-    def __call__(self, mjx_data, geom_bodyid):
+        F = jacrev(self.dynamics_forward_pass)(linearization_point, obs, dynamics) # [state_dim, action_dim]
 
-        def _contact_force(mjx_data, contact_id, efc_address, contact_dim):
-            condim = contact_dim[contact_id]
-            pyramid = jax.lax.dynamic_slice(mjx_data.efc_force,(efc_address,),(6,))
-            normal_force = self.branch_switcher(condim, pyramid)
-            return normal_force
-        def single_contact_normal_force(contact_id, mjx_data, contact_efc_address, contact_dim):
-            efc_address = contact_efc_address[contact_id]
-            normal_force = _contact_force(mjx_data, contact_id, efc_address, contact_dim)
-            return normal_force * (efc_address >= 0)
+        if self.use_gram_schmidt:
+            synergies = self.modified_gram_schmidt(F.T)
+        else:
+            synergies = F / (F.norm(dim=0, keepdim=True) + 1e-8)
+            synergies = synergies.T
 
-        batch_single_contact_normal_force = jax.vmap(single_contact_normal_force, in_axes=(0,None,None,None))
+        return synergies
 
-        obj1 = jp.isin(geom_bodyid[mjx_data.contact.geom1],jp.array(self.object_body_id))
-        adr2 = jp.isin(geom_bodyid[mjx_data.contact.geom2],jp.array(self.adroit_bodies))
-        obj2 = jp.isin(geom_bodyid[mjx_data.contact.geom2],jp.array(self.object_body_id))
-        adr1 = jp.isin(geom_bodyid[mjx_data.contact.geom1],jp.array(self.adroit_bodies))
-        obj_adr_contact = jp.logical_or(jp.logical_and(obj1,adr2),jp.logical_and(obj2,adr1))
-
-        normal_force = batch_single_contact_normal_force(jp.arange(self.num_geoms), mjx_data, jp.array(mjx_data.contact.efc_address), jp.array(mjx_data.contact.dim))
-        total_force = jp.sum(normal_force * obj_adr_contact)
-        return total_force
-
-# class BranchedComputationModule(nn.Module):
-#     num_branches: int
-#     object_body_id: List
-#     adroit_bodies: List
-
-#     def setup(self):
-#         def branch_function(mjx_model, mjx_data, pred, i):
-#             true_fn = partial(lambda mjx_model, mjx_data, i: support.contact_force(mjx_model, mjx_data, i), i=i)
-#             false_fn = lambda mjx_model, mjx_data: jp.zeros(6,)
-#             return jax.lax.cond(pred, true_fn, false_fn, mjx_model, mjx_data)
-#             # return support.contact_force(mjx_model, mjx_data, i)
-
-#         self.branches = [partial(branch_function, i=j) for j in range(self.num_branches)]
-#         self.branch_switcher = lambda idx, mjx_model, mjx_data, pred: jax.lax.switch(idx, self.branches, mjx_model, mjx_data, pred)
-
-#     def __call__(self, mjx_model, mjx_data, geom_bodyid):
-
-#         def body_fn(i, pred, mjx_model, mjx_data):
-#             contact_force = self.branch_switcher(i, mjx_model, mjx_data, pred)
-#             force_vector = contact_force[:3]
-#             contact_normal = mjx_data.contact.frame[i][0,:]
-#             normal_force = jp.dot(force_vector, contact_normal)
-#             return normal_force
-#         batch_body_fn = jax.vmap(body_fn, in_axes=(0,0,None,None))
-
-#         obj1 = jp.isin(geom_bodyid[mjx_data.contact.geom1],jp.array(self.object_body_id))
-#         adr2 = jp.isin(geom_bodyid[mjx_data.contact.geom2],jp.array(self.adroit_bodies))
-#         obj2 = jp.isin(geom_bodyid[mjx_data.contact.geom2],jp.array(self.object_body_id))
-#         adr1 = jp.isin(geom_bodyid[mjx_data.contact.geom1],jp.array(self.adroit_bodies))
-#         obj_adr_contact = jp.logical_or(jp.logical_and(obj1,adr2),jp.logical_and(obj2,adr1))
-
-#         normal_force = batch_body_fn(jp.arange(self.num_branches).astype(jp.int32), obj_adr_contact, mjx_model, mjx_data)
-#         total_force = jp.sum(normal_force)
-#         return total_force
+    def forward(self, linearization_point, obs, dynamics):
+        synergies = vmap(self.get_synergies, in_dims=(0,0,None))(linearization_point, obs, dynamics)
+        return synergies # [batch_size, action_dim, z_dim]
 
 class OnPolicyAlgorithm(BaseAlgorithm):
     """
@@ -212,89 +186,11 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         )
         self.policy = self.policy.to(self.device)
 
-    @partial(jax.jit, static_argnames=["self"])
-    def batch_get_channelled_noise(self, jax_dist_mean, jax_obs, jax_actions, mjx_data, mjx_model, object_bodyid):
-
-        def modified_gram_schmidt(vectors):
-            """
-            adapted from https://github.com/tensorflow/probability/blob/main/tensorflow_probability/python/math/gram_schmidt.py
-            fundamental change: while_loop replaced with scan
-            Args:
-            vectors: A Tensor of shape `[d, n]` of `d`-dim column vectors to
-              orthonormalize.
-
-            Returns:
-            A Tensor of shape `[d, n]` corresponding to the orthonormalization.
-            """
-            def body_fn(vecs, i):
-                u = jp.nan_to_num(vecs[:,i]/jp.linalg.norm(vecs[:,i]))
-                weights = u@vecs
-                masked_weights = jp.where(jp.arange(num_vectors) > i, weights, 0.)
-                vecs = vecs - jp.outer(u,masked_weights)
-                return vecs, None
-            num_vectors = vectors.shape[-1]
-            vectors, _ = jax.lax.scan(body_fn, vectors, jp.arange(num_vectors - 1))
-            vec_norm = jp.linalg.norm(vectors, axis=0, keepdims=True)
-            return jp.nan_to_num(vectors/vec_norm)
-        
-        def object_dynamics(ctrl, obs_tensor, mjx_data, mjx_model, object_bodyid):
-                mjx_data = mjx_data.replace(qpos=obs_tensor[:36])
-                mjx_data = mjx_data.replace(qvel=obs_tensor[155:(155+36)])
-                mjx_data = mjx_data.replace(ctrl=ctrl)
-                mjx_data = mjx.step(mjx_model, mjx_data)
-                # object forces not considered - will want to add later
-                mjx_data = mjx.forward(mjx_model, mjx_data)
-                return mjx_data.cvel[object_bodyid]
-                # total_force = self.total_force({}, mjx_model, mjx_data, jp.array(mjx_model.geom_bodyid))
-                # return jp.concatenate((mjx_data.cvel[object_bodyid],total_force[...,None]))
-                # return mjx_data.qvel[-6:]
-        
-        # get_jacobian = jax.jit(jax.vmap(jax.jacrev(object_dynamics), in_axes=(0,0,None,None,None)))
-        get_jacobian = jax.jacrev(object_dynamics)
-
-        def get_channel(F):
-
-            action_dim = self.action_space.shape[0]
-            F_augmented = jp.concatenate((F.T, jp.eye(action_dim)[:,:(action_dim-F.shape[0])]), axis=1)
-            channel = modified_gram_schmidt(F_augmented)
-
-            # scale = jp.ones(channel.shape)
-            # scale = scale.at[:,:(action_dim-F.shape[0])].set(0.1)
-            # channel = scale * channel
-
-            return channel
-
-        def get_channelled_noise(dist_mean, obs_tensor, actions, mjx_data, mjx_model, object_bodyid):
-
-            # F = np.array(get_jacobian(jp.array(dist_mean), jp.array(obs_tensor.cpu()), mjx_data, mjx_model, object_bodyid))
-            # FT = np.transpose(F,(0,2,1))
-            # F_augmented = np.concatenate((FT, np.eye(self.action_space.shape[0])[:,:(self.action_space.shape[0]-6)]), axis=1)
-            # synergies = modified_gram_schmidt(F_augmented)
-            # noise = actions - dist_mean
-            # channelled_noise = np.einsum("...ij,...j->...i", synergies, noise)
-            # channelled_actions =  dist_mean + channelled_noise
-            F = get_jacobian(dist_mean, obs_tensor, mjx_data, mjx_model, object_bodyid)
-            channel = jax.lax.cond(jp.all(F == 0.), lambda F: jp.eye(self.action_space.shape[0]), get_channel, F)
-            # channel = get_channel(F)
-            noise = actions - dist_mean
-            channelled_noise = channel @ noise
-            return channelled_noise
-        
-        batch_get_channelled_noise = jax.vmap(get_channelled_noise, in_axes=(0,0,0,None,None,None))
-
-        channelled_noise = batch_get_channelled_noise(jax_dist_mean, jax_obs, jax_actions, mjx_data, mjx_model, object_bodyid)
-
-        return channelled_noise
-
     def collect_rollouts(
         self,
         env: VecEnv,
         callback: BaseCallback,
         rollout_buffer: RolloutBuffer,
-        mjx_model,
-        mjx_data,
-        # object_bodyid: int,
-        # adroit_bodies,
         n_rollout_steps: int,
     ) -> bool:
         """
@@ -319,29 +215,6 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
         callback.on_rollout_start()
 
-        # def modified_gram_schmidt(vectors):
-        #     """
-        #     adapted from https://github.com/tensorflow/probability/blob/main/tensorflow_probability/python/math/gram_schmidt.py
-        #     fundamental change: while_loop replaced with scan
-        #     Args:
-        #     vectors: A Tensor of shape `[d, n]` of `d`-dim column vectors to
-        #       orthonormalize.
-
-        #     Returns:
-        #     A Tensor of shape `[d, n]` corresponding to the orthonormalization.
-        #     """
-        #     def body_fn(vecs, i):
-        #         u = np.nan_to_num(vecs[:,i]/jp.linalg.norm(vecs[:,i]))
-        #         weights = u@vecs
-        #         masked_weights = np.where(np.arange(num_vectors) > i, weights, 0.)
-        #         vecs = vecs - np.outer(u,masked_weights)
-        #         return vecs
-        #     num_vectors = vectors.shape[-1]
-        #     for i in np.arange(num_vectors - 1):
-        #         vectors = body_fn(vectors, i)
-        #     vec_norm = np.linalg.norm(vectors, axis=0, keepdims=True)
-        #     return np.nan_to_num(vectors/vec_norm)
-
         while n_steps < n_rollout_steps:
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
                 # Sample a new noise matrix
@@ -350,34 +223,8 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             with th.no_grad():
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = obs_as_tensor(self._last_obs, self.device)
-                actions, values, log_probs, distribution = self.policy.forward(obs_tensor)
+                actions, values, log_probs = self.policy.forward(obs_tensor)
 
-            ######## synergies ########
-            # jax_actions = jp.array(actions).astype(jp.float32)
-            # actions = actions.cpu().numpy()
-            # dist_mean = distribution.mode() #.cpu().numpy()
-            # jax_dist_mean = jp.array(dist_mean.contiguous()).astype(jp.float32)
-            # jax_obs = jp.array(obs_tensor).astype(jp.float32)
-            # # batch_jax_data = jax.jit(jax.vmap(lambda mjx_data, jax_obs: mjx_data.replace(qpos=jax_obs[...,:36]), in_axes=(None,0)))(mjx_data, jax_obs)
-            # # batch_jax_data = jax.jit(jax.vmap(lambda mjx_data, jax_obs: mjx_data.replace(qvel=jax_obs[...,155:(155+36)])))(batch_jax_data, jax_obs)
-            # # channelled_noise = batch_get_channelled_noise(jax_dist_mean, jax_obs, jax_actions, mjx_data, mjx_model, object_bodyid)
-            # channelled_noise = self.batch_get_channelled_noise(jax_dist_mean, jax_obs, jax_actions, mjx_data, mjx_model, object_bodyid)
-            # channelled_actions = dist_mean.cpu().numpy() + np.array(channelled_noise)
-            # clipped_actions = channelled_actions
-            # if isinstance(self.action_space, gym.spaces.Box):
-            #     clipped_actions = np.clip(channelled_actions, self.action_space.low, self.action_space.high)
-            
-            
-            # F = np.array(get_jacobian(jp.array(dist_mean), jp.array(obs_tensor.cpu()), mjx_data, mjx_model, object_bodyid))
-            # FT = np.transpose(F,(0,2,1))
-            # F_augmented = np.concatenate((FT, np.eye(self.action_space.shape[0])[:,:(self.action_space.shape[0]-6)]), axis=1)
-            # synergies = modified_gram_schmidt(F_augmented)
-            # noise = actions - dist_mean
-            # channelled_noise = np.einsum("...ij,...j->...i", synergies, noise)
-            # channelled_actions = dist_mean + channelled_noise
-            # synergies = np.eye(env.action_space.low.size)[None,:,:].repeat(obs_tensor.shape[0], axis=0)
-            # rotated_actions = np.einsum("...ij,...j->...i", synergies, actions)
-            ######## synergies ########
             actions = actions.cpu().numpy()
             clipped_actions = actions
             # Rescale and perform action
@@ -386,6 +233,16 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
+
+            # Handle timeout by bootstraping with value function
+            # see GitHub issue #633
+            next_obs = deepcopy(new_obs)
+            for idx, done in enumerate(dones):
+                if (
+                    done
+                    and infos[idx].get("terminal_observation") is not None
+                ):
+                    next_obs[idx] = infos[idx]["terminal_observation"].copy()
 
             self.num_timesteps += env.num_envs
 
@@ -405,14 +262,14 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             if isinstance(self.action_space, gym.spaces.Discrete):
                 # Reshape in case of discrete action
                 actions = actions.reshape(-1, 1)
-            rollout_buffer.add(self._last_obs, actions, rewards, self._last_episode_starts, values, log_probs)
+            rollout_buffer.add(self._last_obs, actions, next_obs, rewards, self._last_episode_starts, values, log_probs)
             self._last_obs = new_obs
             self._last_episode_starts = dones
 
         with th.no_grad():
             # Compute value for the last timestep
             obs_tensor = obs_as_tensor(new_obs, self.device)
-            _, values, _, _ = self.policy.forward(obs_tensor)
+            _, values, _ = self.policy.forward(obs_tensor)
 
         rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
 
@@ -429,9 +286,6 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
     def learn(
         self,
-        mjx_model,
-        object_bodyid: int,
-        adroit_bodies,
         total_timesteps: int,
         callback: MaybeCallback = None,
         log_interval: int = 1,
@@ -450,82 +304,11 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
         callback.on_training_start(locals(), globals())
 
-        mjx_data =  mjx.make_data(mjx_model)
-
-        # module = BranchedComputationModule(num_branches=mjx_data.contact.geom1.shape[0],
-        #                                     object_body_id=object_bodyid,
-        #                                     adroit_bodies=adroit_bodies)
-        module = BranchedComputationModule(num_branches=4,
-                                           num_geoms=mjx_data.contact.geom1.shape[0],
-                                           object_body_id=object_bodyid,
-                                           adroit_bodies=adroit_bodies)
-        # jit_forces = jax.jit(module.apply)
-        self.total_force = module.apply
-
-        def batch_get_channel(jax_dist_mean, jax_obs, mjx_data, mjx_model, object_bodyid, get_force):
-
-            def modified_gram_schmidt(vectors):
-                """
-                adapted from https://github.com/tensorflow/probability/blob/main/tensorflow_probability/python/math/gram_schmidt.py
-                fundamental change: while_loop replaced with scan
-                Args:
-                vectors: A Tensor of shape `[d, n]` of `d`-dim column vectors to
-                orthonormalize.
-
-                Returns:
-                A Tensor of shape `[d, n]` corresponding to the orthonormalization.
-                """
-                def body_fn(vecs, i):
-                    u = jp.nan_to_num(vecs[:,i]/jp.linalg.norm(vecs[:,i]))
-                    weights = u@vecs
-                    masked_weights = jp.where(jp.arange(num_vectors) > i, weights, 0.)
-                    vecs = vecs - jp.outer(u,masked_weights)
-                    return vecs, None
-                num_vectors = vectors.shape[-1]
-                vectors, _ = jax.lax.scan(body_fn, vectors, jp.arange(num_vectors - 1))
-                vec_norm = jp.linalg.norm(vectors, axis=0, keepdims=True)
-                return jp.nan_to_num(vectors/vec_norm)
-            
-            def denormalize_action(action, mjx_model):
-                ac_min, ac_max = mjx_model.actuator_ctrlrange.T
-                ac_mid = 0.5 * (ac_max + ac_min)
-                ac_range = 0.5 * (ac_max - ac_min)
-                return jp.clip(action, -1., 1.) * ac_range + ac_mid
-            
-            def object_dynamics(ctrl, obs_tensor, mjx_data, mjx_model, object_bodyid, get_force):
-                    mjx_data = mjx_data.replace(qpos=obs_tensor[:36])
-                    mjx_data = mjx_data.replace(qvel=obs_tensor[155:(155+36)])
-                    mjx_data = mjx_data.replace(ctrl=denormalize_action(ctrl, mjx_model))
-                    mjx_data = mjx.step(mjx_model, mjx_data)
-                    mjx_data = mjx.forward(mjx_model, mjx_data)
-                    return mjx_data.cvel[object_bodyid]
-                    # total_force = get_force({}, mjx_data, jp.array(mjx_model.geom_bodyid))
-                    # return jp.concatenate((mjx_data.cvel[object_bodyid], total_force[...,None]))
-                    # return mjx_data.qvel[-6:]
-
-            get_jacobian = jax.jacrev(object_dynamics)
-
-            def get_channelled_noise(dist_mean, obs_tensor, mjx_data, mjx_model, object_bodyid, get_force):
-                F = get_jacobian(dist_mean, obs_tensor, mjx_data, mjx_model, object_bodyid, get_force)
-                # only do GS if F is full rank (all elements of the controlled variable can be influenced)
-                # 2 options in other case: simply normalize rows of F or return a zero matrix
-                is_full_rank = (jp.linalg.matrix_rank(F) == min(F.shape))
-                channel = jax.lax.cond(is_full_rank, lambda FT: modified_gram_schmidt(FT), lambda FT: FT * 0., F.T)
-                # channel = jax.lax.cond(is_full_rank, lambda FT: FT / jp.linalg.norm(FT, axis=0, keepdims=True), lambda FT: FT * 0., F.T)
-                # channel = jax.lax.cond(jp.all(jp.any(F != 0., axis=1)), lambda FT: FT / jp.linalg.norm(FT, axis=0, keepdims=True), lambda FT: modified_gram_schmidt(FT), F.T)
-                return channel
-            batch_get_channelled_noise = jax.vmap(get_channelled_noise, in_axes=(0,0,None,None,None,None))
-
-            channel = batch_get_channelled_noise(jax_dist_mean, jax_obs, mjx_data, mjx_model, object_bodyid, get_force)
-
-            return channel
-
-        self.policy.jit_batch_get_channel = jax.jit(partial(batch_get_channel, mjx_data=mjx_data, mjx_model=mjx_model, object_bodyid=object_bodyid, get_force=module.apply))
+        self.policy.get_synergies = Synergies(use_gram_schmidt=True).forward
 
         while self.num_timesteps < total_timesteps:
 
-            # continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, mjx_model, mjx_data, object_bodyid, adroit_bodies, n_rollout_steps=self.n_steps)
-            continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, mjx_model, mjx_data, n_rollout_steps=self.n_steps)
+            continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps)
 
             if continue_training is False:
                 break

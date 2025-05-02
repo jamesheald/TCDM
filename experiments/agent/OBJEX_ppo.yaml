@@ -15,6 +15,10 @@ params:
   warm_start_mean: True                                     # Warm start mean to explore around initial position
   # guide_coef: 1000000
   guide_coef: 0.
+  dynamics_learning_rate: 1e-3
+  dynamics_n_epochs: 40
+  net_arch_dyn: [500, 500]
+  dynamics_dropout: [0., 0.]
 policy_kwargs:                                              # Policy parameters (initial STD and architecture)
   net_arch:
     - pi: [256, 128]

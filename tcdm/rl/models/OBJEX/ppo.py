@@ -1,10 +1,12 @@
 import warnings
-from typing import Any, Dict, Optional, Type, Union
+from typing import Any, Dict, Optional, Type, Union, List
 
 import numpy as np
 import torch as th
 from gym import spaces
 from torch.nn import functional as F
+
+from types import SimpleNamespace
 
 # from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 # from stable_baselines3.common.policies import ActorCriticPolicy
@@ -12,7 +14,7 @@ from tcdm.rl.models.OBJEX.on_policy_algorithm import OnPolicyAlgorithm
 from tcdm.rl.models.OBJEX.policies import ActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import explained_variance, get_schedule_fn
-
+from tcdm.rl.models.OBJEX.dynamics import Dynamics
 
 class PPO(OnPolicyAlgorithm):
     """
@@ -85,6 +87,12 @@ class PPO(OnPolicyAlgorithm):
         use_sde: bool = False,
         sde_sample_freq: int = -1,
         target_kl: Optional[float] = None,
+        dynamics_learning_rate: float = 0.001,
+        net_arch_dyn: List = [],
+        pi_and_Q_observations: List = [],
+        controlled_variables: List = [],
+        dynamics_dropout: List = [],
+        dynamics_n_epochs: int = 40,
         tensorboard_log: Optional[str] = None,
         create_eval_env: bool = False,
         policy_kwargs: Optional[Dict[str, Any]] = None,
@@ -152,6 +160,14 @@ class PPO(OnPolicyAlgorithm):
         self.target_kl = target_kl
 
         self.guide_coef = guide_coef
+        self.dynamics_learning_rate = dynamics_learning_rate
+        self.net_arch_dyn = net_arch_dyn
+        self.dynamics_dropout = dynamics_dropout
+        self.dynamics_n_epochs = dynamics_n_epochs
+        self.pi_and_Q_observations = pi_and_Q_observations
+        self.controlled_variables = controlled_variables
+
+        self.action_dim = self.env.action_space.shape[0]
 
         if _init_setup_model:
             self._setup_model()
@@ -167,10 +183,49 @@ class PPO(OnPolicyAlgorithm):
 
             self.clip_range_vf = get_schedule_fn(self.clip_range_vf)
 
+        self.policy.dynamics = SimpleNamespace()
+
+        self.policy.dynamics.model = Dynamics(action_dim=self.action_dim,
+                                              net_arch_dyn=self.net_arch_dyn,
+                                              dynamics_observations=self.pi_and_Q_observations,
+                                              controlled_variables=self.controlled_variables,
+                                              drop_out_rates=self.dynamics_dropout).to("cuda")
+
+        self.policy.dynamics.optimizer = th.optim.Adam(self.policy.dynamics.model.parameters(),
+                                                       lr=self.dynamics_learning_rate,
+        )
+
     def train(self) -> None:
         """
         Update policy using the currently gathered rollout buffer.
         """
+
+        dynamics_losses = []
+
+        for epoch in range(self.dynamics_n_epochs):
+            for rollout_data in self.rollout_buffer.get(self.batch_size):
+                actions = rollout_data.actions
+                if isinstance(self.action_space, spaces.Discrete):
+                    # Convert discrete action from float to long
+                    actions = rollout_data.actions.long().flatten()              
+
+                s_prime_mean, _ = self.policy.dynamics.model(rollout_data.observations, th.clamp(actions, -1., 1.))
+                
+                delta_obs = rollout_data.next_observations-rollout_data.observations
+                dynamics_loss = ((s_prime_mean - delta_obs[...,self.controlled_variables])**2).mean()
+                # dynamics_loss = -log_likelihood_diagonal_Gaussian(delta_obs[:,control_variables], s_prime_mean, s_prime_log_var).sum(axis=-1)
+                # dynamics_loss /= len(control_variables)
+                # return dynamics_loss.mean()
+
+                dynamics_losses.append(dynamics_loss.item())
+
+                # Optimization step
+                self.policy.dynamics.optimizer.zero_grad()
+                dynamics_loss.backward()
+                # Clip grad norm
+                th.nn.utils.clip_grad_norm_(self.policy.dynamics.model.parameters(), self.max_grad_norm)
+                self.policy.dynamics.optimizer.step()
+
         # Update optimizer learning rate
         self._update_learning_rate(self.policy.optimizer)
         # Compute current clip range
@@ -310,6 +365,7 @@ class PPO(OnPolicyAlgorithm):
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
         self.logger.record("train/guide_loss", np.mean(guide_losses))
+        self.logger.record("train/dynamics_loss", np.mean(dynamics_losses))
         self.logger.record("train/approx_kl", np.mean(approx_kl_divs))
         self.logger.record("train/clip_fraction", np.mean(clip_fractions))
         self.logger.record("train/loss", loss.item())
@@ -326,9 +382,6 @@ class PPO(OnPolicyAlgorithm):
     def learn(
         self,
         total_timesteps: int,
-        mjx_model,
-        object_bodyid: int,
-        adroit_bodies,
         callback: MaybeCallback = None,
         log_interval: int = 1,
         eval_env: Optional[GymEnv] = None,
@@ -341,9 +394,6 @@ class PPO(OnPolicyAlgorithm):
 
         return super(PPO, self).learn(
             total_timesteps=total_timesteps,
-            mjx_model=mjx_model,
-            object_bodyid=object_bodyid,
-            adroit_bodies=adroit_bodies,
             callback=callback,
             log_interval=log_interval,
             eval_env=eval_env,
