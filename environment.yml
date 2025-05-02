@@ -1,4 +1,4 @@
-name: tcdm
+name: tcdm39
 channels:
   - nvidia
   - pytorch
@@ -66,9 +66,8 @@ dependencies:
   - numpy=1.19.2=py38h54aff64_0
   - numpy-base=1.19.2=py38hfa32c7d_0
   - pillow=7.1.2=py38hb39fc2d_0
-  - cudatoolkit=11.1.74=h6bb024c_0
-  - pytorch=1.9.0=py3.8_cuda11.1_cudnn8.0.5_0
-  - torchaudio=0.9.0=py38
-  - torchvision=0.10.0=py38_cu111
-prefix: /private/home/sudeepdasari/.conda/envs/tcdm
-
+  - cudatoolkit # Attempt to upgrade cudatoolkit
+  - pytorch # Let Conda find a compatible version for CUDA 12 and py3.8
+  - torchaudio # Let Conda find a compatible version
+  - torchvision # Let Conda find a compatible version
+prefix: /private/home/sudeepdasari/.conda/envs/tcdm_cuda12_attempt
