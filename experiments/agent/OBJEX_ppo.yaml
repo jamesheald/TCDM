@@ -23,6 +23,7 @@ policy_kwargs:                                              # Policy parameters 
   net_arch:
     - pi: [256, 128]
       vf: [256, 128]
+      ex: [256, 128]
   log_std_init: -1.60
 
 jax_enable_x64: False

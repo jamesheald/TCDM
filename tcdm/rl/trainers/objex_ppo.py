@@ -86,6 +86,8 @@ def objex_ppo_trainer(config, resume_model=None):
         if total_timesteps <= 0:
             return model
     else:
+        policy_kwargs = make_policy_kwargs(config.agent.policy_kwargs)
+        policy_kwargs['pi_and_Q_observations']=env.get_attr('pi_and_Q_observations')[0]
         model = OBJEX_PPO(
                         ActorCriticPolicy, 
                         env, verbose=1, 
@@ -106,7 +108,7 @@ def objex_ppo_trainer(config, resume_model=None):
                         dynamics_dropout=config.agent.params.dynamics_dropout,
                         pi_and_Q_observations=env.get_attr('pi_and_Q_observations')[0],
                         controlled_variables=env.get_attr('controlled_variables')[0],
-                        policy_kwargs=make_policy_kwargs(config.agent.policy_kwargs)
+                        policy_kwargs=policy_kwargs
                     )
         # initialize the agent with behavior cloning if desired
         if config.agent.params.warm_start_mean:

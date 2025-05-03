@@ -209,9 +209,10 @@ class BasePolicy(BaseModel):
         or not using a ``tanh()`` function.
     """
 
-    def __init__(self, *args, squash_output: bool = False, **kwargs):
+    def __init__(self, *args, squash_output: bool = False, pi_and_Q_observations: List =[], **kwargs):
         super(BasePolicy, self).__init__(*args, **kwargs)
         self._squash_output = squash_output
+        self._pi_and_Q_observations = pi_and_Q_observations
 
     @staticmethod
     def _dummy_schedule(progress_remaining: float) -> float:
@@ -223,6 +224,11 @@ class BasePolicy(BaseModel):
     def squash_output(self) -> bool:
         """(bool) Getter for squash_output."""
         return self._squash_output
+    
+    @property
+    def pi_and_Q_observations(self) -> bool:
+        """(bool) Getter for pi_and_Q_observations."""
+        return self._pi_and_Q_observations
 
     @staticmethod
     def init_weights(module: nn.Module, gain: float = 1) -> None:
@@ -585,7 +591,9 @@ class ActorCriticPolicy(BasePolicy):
             for the actor, the value function and for gSDE function
         """
         # Preprocess the observation if needed
-        features = self.extract_features(obs)
+        original_obs = obs[...,self.pi_and_Q_observations]
+
+        features = self.extract_features(original_obs)
         latent_pi, latent_vf = self.mlp_extractor(features)
 
         # Features for sde

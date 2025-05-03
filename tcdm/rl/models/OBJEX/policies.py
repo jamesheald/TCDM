@@ -68,6 +68,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
         log_std_init: Union[List[float], float] = 0.0,
         full_std: bool = True,
         sde_net_arch: Optional[List[int]] = None,
+        pi_and_Q_observations: List = [],
         use_expln: bool = False,
         squash_output: bool = False,
         features_extractor_class: Type[BaseFeaturesExtractor] = FlattenExtractor,
@@ -92,6 +93,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
             optimizer_class=optimizer_class,
             optimizer_kwargs=optimizer_kwargs,
             squash_output=squash_output,
+            pi_and_Q_observations=pi_and_Q_observations,
         )
 
         # Default network architecture, from stable-baselines
@@ -106,7 +108,8 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
         self.ortho_init = ortho_init
 
         self.features_extractor = features_extractor_class(self.observation_space, **self.features_extractor_kwargs)
-        self.features_dim = self.features_extractor.features_dim
+        # self.features_dim = self.features_extractor.features_dim
+        self.features_dim = len(pi_and_Q_observations)
 
         self.normalize_images = normalize_images
         self.log_std_init = log_std_init
