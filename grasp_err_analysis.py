@@ -64,7 +64,7 @@ def _object_touching_table(env):
     # table_geom_id = env._base_env.physics.model.body("table").id
 
     # breakpoint()
-
+    
     for con in env._base_env.physics.data.contact:
         if env._base_env.physics.model.geom(con.geom1).bodyid[0] == object_body_id:
             # if env.unwrapped.sim.model.geom(con.geom2).bodyid == table_body_id:

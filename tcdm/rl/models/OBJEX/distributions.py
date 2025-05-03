@@ -726,7 +726,7 @@ class FullGaussianDistribution(Distribution):
         :return:
         """
         # mean_actions = nn.Linear(latent_dim, self.action_dim)
-        mean_actions_and_zlogstd = nn.Linear(latent_dim, self.action_dim + 6)
+        mean_actions_and_zlogstd = nn.Linear(latent_dim, self.action_dim + 7)
         # TODO: allow action dependent std
         log_std = nn.Parameter(th.ones(self.action_dim) * log_std_init, requires_grad=True)
         zlog_std = nn.Parameter(th.ones(7) * log_std_init, requires_grad=True)

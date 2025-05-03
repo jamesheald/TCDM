@@ -17,7 +17,7 @@ class Dynamics(nn.Module):
         for i, h_dim in enumerate(net_arch_dyn):
             seq = nn.Sequential(
                 nn.Linear(input_dim if i == 0 else net_arch_dyn[i - 1], h_dim),
-                # nn.LayerNorm(h_dim),
+                nn.LayerNorm(h_dim),
                 nn.ReLU(),
                 # nn.Dropout(drop_out_rates[i]) if drop_out_rates[i] > 0 else nn.Identity()
             )

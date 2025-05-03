@@ -13,7 +13,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, \
                                              VecVideoRecorder
 
-from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjCvelOnlyForce
+from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjQvelForce
 
 class InfoCallback(BaseCallback):
     def _on_rollout_end(self) -> None:
@@ -65,7 +65,7 @@ def _env_maker(name, task_kwargs, env_kwargs, info_keywords, state_keyword):
                      dict(env_kwargs), gym_wrap=True)
     env = Monitor(env, info_keywords=tuple(info_keywords))
     env = _ObsExtractor(env, state_keyword)
-    env = PGDMObsWrapperObjCvelOnlyForce(env, domain)
+    env = PGDMObsWrapperObjQvelForce(env, domain)
     return env
 
 

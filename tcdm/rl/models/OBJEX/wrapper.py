@@ -86,14 +86,12 @@ class GymWrapper(core.Env):
     def wrapped(self):
         return self._base_env
     
-class PGDMObsWrapperObjCvelOnlyForce(gym.ObservationWrapper):
+class PGDMObsWrapperObjQvelForce(gym.ObservationWrapper):
     def __init__(self, env, domain):
         super().__init__(env)
 
-        # self.cfg = cfg
-
         self.num_pi_and_Q_observations = self.env.observation_space.shape[0]
-        self.num_controlled_variables = 6
+        self.num_controlled_variables = 6 + 1
 
         self.observation_space = gym.spaces.Box(low=-10., high=10.,
                                                 shape=(self.num_pi_and_Q_observations + self.num_controlled_variables,),
@@ -105,44 +103,48 @@ class PGDMObsWrapperObjCvelOnlyForce(gym.ObservationWrapper):
         # indices of the controlled variables
         self.controlled_variables = [self.num_pi_and_Q_observations + i for i in range(self.num_controlled_variables)]
 
-        # domain, _ = cfg.env['name'].split('-')
-        self.object_body_id = self.env.unwrapped._base_env.physics.model.name2id(domain + '/object', 'body')
+        self.model = self.env.unwrapped._base_env.physics.model
 
-        # self.object_body_id = self.env.unwrapped.sim.model.body(self.cfg.env.object[self.cfg.env.env_id]).id
-        # self.finger_tip_bodies_ids = [self.env.unwrapped.sim.model.body(i).id for i in range(env.unwrapped.sim.model.nbody)
-                                    #   if self.env.unwrapped.sim.model.body(i).name in ["distal_thumb", "distph2", "distph3", "distph4", "distph5"]]
+        object_geom_name_to_id = {}
+        adroit_geom_name_to_id = {}
+        object_name = domain + "/"
+        for i in range(self.model.ngeom):
+            name = mujoco.mj_id2name(self.model.ptr, mujoco.mjtObj.mjOBJ_GEOM, i)
+            if "adroit/C_th" in name or "adroit/C_ff" in name or "adroit/C_mf" in name or "adroit/C_rf" in name or "adroit/C_lf" in name:
+                adroit_geom_name_to_id[name] = i
+            elif object_name in name:
+                object_geom_name_to_id[name] = i
 
-    # def normal_force(self):
+        self.adroit_geom_ids = set(adroit_geom_name_to_id.values())
+        self.object_geom_ids = set(object_geom_name_to_id.values())
 
-    #     total_normal_force = 0.
-    #     for i_con, con in enumerate(self.env.unwrapped.sim.data.contact):
-    #         if self.env.unwrapped.sim.model.geom(con.geom1).bodyid == self.object_body_id:
-    #             if self.env.unwrapped.sim.model.geom(con.geom2).bodyid in self.finger_tip_bodies_ids:
-    #                 total_normal_force += self.single_contact_normal_force(con, i_con)
-    #         elif self.env.unwrapped.sim.model.geom(con.geom2).bodyid == self.object_body_id:
-    #             if self.env.unwrapped.sim.model.geom(con.geom1).bodyid in self.finger_tip_bodies_ids:
-    #                 total_normal_force += self.single_contact_normal_force(con, i_con)
-    #     return np.array(total_normal_force)
+    def normal_force(self):
+
+        total_normal_force = 0.
+        for i_con, con in enumerate(self.env.unwrapped._base_env.physics.data.contact):
+            if con.geom1 in self.adroit_geom_ids and con.geom2 in self.object_geom_ids or \
+                con.geom2 in self.adroit_geom_ids and con.geom1 in self.object_geom_ids:
+                total_normal_force += self.single_contact_normal_force(i_con)
+        return np.array(total_normal_force)
         
-    # def single_contact_normal_force(self, con, i_con):
+    def single_contact_normal_force(self, i_con):
 
-    #     # https://roboti.us/book/programming.html
-    #     contact_force = np.zeros((6,1))
-    #     mujoco.mj_contactForce(self.env.unwrapped.sim.model._model, self.env.unwrapped.sim.data._data, i_con, contact_force)
-    #     # force_vector = contact_force[:3,0]
-    #     # contact_normal = con.frame[:3]
-    #     # normal_force = abs(np.dot(force_vector, contact_normal))
-    #     normal_force = abs(contact_force[0,0])
+        self.env.unwrapped._base_env.physics.forward()
 
-    #     return normal_force
+        # https://roboti.us/book/programming.html
+        contact_force = np.zeros((6,1))
+        mujoco.mj_contactForce(self.model.ptr, self.env.unwrapped._base_env.physics.data.ptr, i_con, contact_force)
+        normal_force = abs(contact_force[0,0])
+
+        return normal_force
         
     def observation(self, obs):
 
-        # total_normal_force = self.normal_force()
+        total_normal_force = self.normal_force()
 
         new_obs = np.concatenate((obs,
-                                    self.env.unwrapped._base_env.physics.data.cvel[self.object_body_id]),
-                                    # total_normal_force[None]), 
+                                    self.env.unwrapped._base_env.physics.data.qvel[-6:],
+                                    total_normal_force[None]/10.), 
                                     axis=0).astype(np.float32)
         
         return new_obs

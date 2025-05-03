@@ -212,10 +212,9 @@ class PPO(OnPolicyAlgorithm):
                 s_prime_mean, _ = self.policy.dynamics.model(rollout_data.observations, th.clamp(actions, -1., 1.))
                 
                 delta_obs = rollout_data.next_observations-rollout_data.observations
-                dynamics_loss = ((s_prime_mean - delta_obs[...,self.controlled_variables])**2).mean()
+                # dynamics_loss = ((s_prime_mean - delta_obs[...,self.controlled_variables])**2).mean()
+                dynamics_loss = F.mse_loss(s_prime_mean, delta_obs[...,self.controlled_variables])
                 # dynamics_loss = -log_likelihood_diagonal_Gaussian(delta_obs[:,control_variables], s_prime_mean, s_prime_log_var).sum(axis=-1)
-                # dynamics_loss /= len(control_variables)
-                # return dynamics_loss.mean()
 
                 dynamics_losses.append(dynamics_loss.item())
 
@@ -247,7 +246,9 @@ class PPO(OnPolicyAlgorithm):
             # Do a complete pass on the rollout buffer
             total_sum = 0.0
             total_count = 0
+            CV = []
             for rollout_data in self.rollout_buffer.get(self.batch_size):
+                CV.append(abs(rollout_data.observations[...,-7:]).mean(dim=0))
                 actions = rollout_data.actions
                 if isinstance(self.action_space, spaces.Discrete):
                     # Convert discrete action from float to long
@@ -361,6 +362,13 @@ class PPO(OnPolicyAlgorithm):
         zstd_mean = total_sum / total_count
 
         # Logs
+        self.logger.record("train/CV0", th.stack(CV).mean(dim=0)[0].cpu().numpy().item())
+        self.logger.record("train/CV1", th.stack(CV).mean(dim=0)[1].cpu().numpy().item())
+        self.logger.record("train/CV2", th.stack(CV).mean(dim=0)[2].cpu().numpy().item())
+        self.logger.record("train/CV3", th.stack(CV).mean(dim=0)[3].cpu().numpy().item())
+        self.logger.record("train/CV4", th.stack(CV).mean(dim=0)[4].cpu().numpy().item())
+        self.logger.record("train/CV5", th.stack(CV).mean(dim=0)[5].cpu().numpy().item())
+        self.logger.record("train/CV6", th.stack(CV).mean(dim=0)[6].cpu().numpy().item())
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))

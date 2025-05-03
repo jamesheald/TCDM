@@ -28,6 +28,56 @@ def objex_ppo_trainer(config, resume_model=None):
     multi_proc = bool(config.agent.multi_proc)
     env = make_env(multi_proc=multi_proc, **config.env)
 
+    # import mujoco
+    # object_geom_name_to_id = {}
+    # adroit_geom_name_to_id = {}
+    # for i in range(env.get_attr("unwrapped")[0]._base_env.physics.model.ngeom):
+    #     name = mujoco.mj_id2name(env.get_attr("unwrapped")[0]._base_env.physics.model._model, mujoco.mjtObj.mjOBJ_GEOM, i)
+    #     if "adroit/C_th" in name or "adroit/C_ff" in name or "adroit/C_mf" in name or "adroit/C_rf" in name or "adroit/C_lf" in name:
+    #         adroit_geom_name_to_id[name] = i
+    #     elif "hammer/" in name:
+    #         object_geom_name_to_id[name] = i
+
+    # breakpoint()
+
+    # env.reset()
+    # for i in range(50):
+    #     env.step(env.action_space.sample())
+    # import mujoco
+    # for con in env.get_attr("unwrapped")[0]._base_env.physics.data.contact:
+    #     body_id = env.get_attr("unwrapped")[0]._base_env.physics.model.geom(con.geom1).bodyid[0]
+    #     print(mujoco.mj_id2name(env.get_attr("unwrapped")[0]._base_env.physics.model._model, mujoco.mjtObj.mjOBJ_BODY, body_id))
+    #     body_id = env.get_attr("unwrapped")[0]._base_env.physics.model.geom(con.geom2).bodyid[0]
+    #     print(mujoco.mj_id2name(env.get_attr("unwrapped")[0]._base_env.physics.model._model, mujoco.mjtObj.mjOBJ_BODY, body_id))
+    #     print(mujoco.mj_id2name(env.get_attr("unwrapped")[0]._base_env.physics.model._model, mujoco.mjtObj.mjOBJ_GEOM, con.geom1))
+    #     print(mujoco.mj_id2name(env.get_attr("unwrapped")[0]._base_env.physics.model._model, mujoco.mjtObj.mjOBJ_GEOM, con.geom2))
+
+    # breakpoint()
+
+    # def get_body_name_to_id_dict(mjx_model):
+    #     """Returns a dictionary mapping body names to their IDs."""
+    #     body_name_to_id = {}
+    #     for body_id in range(mjx_model.nbody):
+    #         # Get the start index of this body's name in the names buffer
+    #         start = mjx_model.name_bodyadr[body_id]
+    #         # Find the end of the name (next null byte)
+    #         end = start
+    #         while end < len(mjx_model.names) and mjx_model.names[end] != 0:
+    #             end += 1
+    #         # Extract the name as a string
+    #         name_bytes = mjx_model.names[start:end]
+    #         name = name_bytes.decode('utf-8')
+    #         body_name_to_id[name] = body_id
+    #     return body_name_to_id
+    # body_dict = get_body_name_to_id_dict(env.get_attr("unwrapped")[0]._base_env.physics.model)
+
+    # import mujoco
+    # for i in range(env.get_attr("unwrapped")[0]._base_env.physics.model.ngeom):
+    #     name = mujoco.mj_id2name(env.get_attr("unwrapped")[0]._base_env.physics.model._model, mujoco.mjtObj.mjOBJ_GEOM, i)
+    #     print(f"{i}: {name}")
+
+    # breakpoint()
+
     if resume_model:
         model = OBJEX_PPO.load(resume_model, env)
         model._last_obs = None
