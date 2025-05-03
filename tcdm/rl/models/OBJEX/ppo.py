@@ -236,7 +236,7 @@ class PPO(OnPolicyAlgorithm):
         entropy_losses = []
         pg_losses, value_losses = [], []
         clip_fractions = []
-        guide_losses = []
+        # guide_losses = []
 
         continue_training = True
 
@@ -283,13 +283,13 @@ class PPO(OnPolicyAlgorithm):
                 policy_loss_2 = advantages * th.clamp(ratio, 1 - clip_range, 1 + clip_range)
                 policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
 
-                P = th.bmm(channel, channel.transpose(1, 2)) # Shape [batch_size, 30, 30]
-                centered_x = action_mu - action_mu.detach() # Shape [batch_size, 30]
-                projected_x = th.bmm(P, centered_x.unsqueeze(-1)).squeeze(-1) + action_mu.detach() # Shape [batch_size, 30]
-                guide_dist = th.norm(projected_x - action_mu, dim=1)
-                nonzero_mask = (channel != 0.).any(dim=(1, 2)).float() # shape [B], bool
-                guide_dist_masked = guide_dist * nonzero_mask
-                guide_dist = guide_dist_masked.sum() / nonzero_mask.sum()
+                # P = th.bmm(channel, channel.transpose(1, 2)) # Shape [batch_size, 30, 30]
+                # centered_x = action_mu - action_mu.detach() # Shape [batch_size, 30]
+                # projected_x = th.bmm(P, centered_x.unsqueeze(-1)).squeeze(-1) + action_mu.detach() # Shape [batch_size, 30]
+                # guide_dist = th.norm(projected_x - action_mu, dim=1)
+                # nonzero_mask = (channel != 0.).any(dim=(1, 2)).float() # shape [B], bool
+                # guide_dist_masked = guide_dist * nonzero_mask
+                # guide_dist = guide_dist_masked.sum() / nonzero_mask.sum()
 
                 # Logging
                 pg_losses.append(policy_loss.item())
@@ -318,7 +318,7 @@ class PPO(OnPolicyAlgorithm):
 
                 entropy_losses.append(entropy_loss.item())
 
-                loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss + self.guide_coef * guide_dist
+                loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss # + self.guide_coef * guide_dist
 
                 # Calculate approximate form of reverse KL Divergence for early stopping
                 # see issue #417: https://github.com/DLR-RM/stable-baselines3/issues/417
@@ -372,7 +372,7 @@ class PPO(OnPolicyAlgorithm):
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
-        self.logger.record("train/guide_loss", np.mean(guide_losses))
+        # self.logger.record("train/guide_loss", np.mean(guide_losses))
         self.logger.record("train/dynamics_loss", np.mean(dynamics_losses))
         self.logger.record("train/approx_kl", np.mean(approx_kl_divs))
         self.logger.record("train/clip_fraction", np.mean(clip_fractions))

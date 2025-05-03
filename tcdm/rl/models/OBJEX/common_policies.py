@@ -29,12 +29,14 @@ from stable_baselines3.common.torch_layers import (
     BaseFeaturesExtractor,
     CombinedExtractor,
     FlattenExtractor,
-    MlpExtractor,
+    # MlpExtractor,
     NatureCNN,
     create_mlp,
 )
 from stable_baselines3.common.type_aliases import Schedule
 from stable_baselines3.common.utils import get_device, is_vectorized_observation, obs_as_tensor
+
+from tcdm.rl.models.OBJEX.common_torch_layers import MlpExtractor
 
 class BaseModel(nn.Module, ABC):
     """
@@ -524,7 +526,8 @@ class ActorCriticPolicy(BasePolicy):
             )
 
         if isinstance(self.action_dist, FullGaussianDistribution):
-            self.action_net, self.log_std, self.zlog_std = self.action_dist.proba_distribution_net(
+            # self.action_net, self.log_std, self.zlog_std = self.action_dist.proba_distribution_net(
+            self.action_net, self.log_std = self.action_dist.proba_distribution_net(
                 latent_dim=latent_dim_pi, log_std_init=self.log_std_init
             )
         elif isinstance(self.action_dist, DiagGaussianDistribution):
@@ -546,6 +549,9 @@ class ActorCriticPolicy(BasePolicy):
             raise NotImplementedError(f"Unsupported distribution '{self.action_dist}'.")
 
         self.value_net = nn.Linear(self.mlp_extractor.latent_dim_vf, 1)
+
+        self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, 7)
+
         # Init weights: use orthogonal initialization
         # with small initial weight for the output
         if self.ortho_init:
@@ -558,6 +564,7 @@ class ActorCriticPolicy(BasePolicy):
                 self.mlp_extractor: np.sqrt(2),
                 self.action_net: 0.01,
                 self.value_net: 1,
+                self.explore_net: 1,
             }
             for module, gain in module_gains.items():
                 module.apply(partial(self.init_weights, gain=gain))
@@ -573,10 +580,10 @@ class ActorCriticPolicy(BasePolicy):
         :param deterministic: Whether to sample or use deterministic actions
         :return: action, value and log probability of the action
         """
-        latent_pi, latent_vf, latent_sde = self._get_latent(obs)
+        latent_pi, latent_vf, latent_ex, latent_sde = self._get_latent(obs)
         # Evaluate the values for the given observations
         values = self.value_net(latent_vf)
-        (distribution, _), _, _ = self._get_action_dist_from_latent(latent_pi, obs, latent_sde=latent_sde)
+        (distribution, _), _, _ = self._get_action_dist_from_latent(latent_pi, latent_ex, obs, latent_sde=latent_sde)
         actions = distribution.get_actions(deterministic=deterministic)
         log_prob = distribution.log_prob(actions)
         return actions, values, log_prob
@@ -594,15 +601,15 @@ class ActorCriticPolicy(BasePolicy):
         original_obs = obs[...,self.pi_and_Q_observations]
 
         features = self.extract_features(original_obs)
-        latent_pi, latent_vf = self.mlp_extractor(features)
+        latent_pi, latent_vf, latent_ex = self.mlp_extractor(features)
 
         # Features for sde
         latent_sde = latent_pi
         if self.sde_features_extractor is not None:
             latent_sde = self.sde_features_extractor(features)
-        return latent_pi, latent_vf, latent_sde
+        return latent_pi, latent_vf, latent_ex, latent_sde
 
-    def _get_action_dist_from_latent(self, latent_pi: th.Tensor, obs: th.Tensor, latent_sde: Optional[th.Tensor] = None) -> Distribution:
+    def _get_action_dist_from_latent(self, latent_pi: th.Tensor, latent_ex: th.Tensor, obs: th.Tensor, latent_sde: Optional[th.Tensor] = None) -> Distribution:
         """
         Retrieve action distribution given the latent codes.
 
@@ -610,19 +617,17 @@ class ActorCriticPolicy(BasePolicy):
         :param latent_sde: Latent code for the gSDE exploration function
         :return: Action distribution
         """
-        # mean_actions = self.action_net(latent_pi)
-        # mean_actions, log_std = self.action_net(latent_pi).chunk(2, dim=-1)
-        mean_actions_and_zlogstd = self.action_net(latent_pi)
-
-        mean_actions = th.tanh(mean_actions_and_zlogstd[..., :self.action_dim])
-        zlog_std = mean_actions_and_zlogstd[..., self.action_dim:]
+        # mean_actions_and_zlogstd = self.action_net(latent_pi)
+        # mean_actions = th.tanh(mean_actions_and_zlogstd[..., :self.action_dim])
+        mean_actions = th.tanh(self.action_net(latent_pi))
+        # zlog_std = mean_actions_and_zlogstd[..., self.action_dim:]
+        zlog_std = self.explore_net(latent_ex)
 
         channel = self.get_synergies(mean_actions, obs, self.dynamics.model)
 
         if isinstance(self.action_dist, FullGaussianDistribution):
-            # return self.action_dist.proba_distribution(mean_actions, self.zlog_std, self.log_std, channel), mean_actions_and_zlogstd[..., :self.action_dim], channel
-            return self.action_dist.proba_distribution(mean_actions, zlog_std, self.log_std, channel), mean_actions_and_zlogstd[..., :self.action_dim], channel
-            # return self.action_dist.proba_distribution(mean_actions, log_std)
+            # return self.action_dist.proba_distribution(mean_actions, zlog_std, self.log_std, channel), mean_actions_and_zlogstd[..., :self.action_dim], channel
+            return self.action_dist.proba_distribution(mean_actions, zlog_std, self.log_std, channel), mean_actions, channel
         elif isinstance(self.action_dist, DiagGaussianDistribution):
             return self.action_dist.proba_distribution(mean_actions, self.log_std)
         elif isinstance(self.action_dist, CategoricalDistribution):
@@ -647,8 +652,8 @@ class ActorCriticPolicy(BasePolicy):
         :param deterministic: Whether to use stochastic or deterministic actions
         :return: Taken action according to the policy
         """
-        latent_pi, _, latent_sde = self._get_latent(observation)
-        (distribution, _), _, _ = self._get_action_dist_from_latent(latent_pi, observation, latent_sde)
+        latent_pi, _, latent_ex, latent_sde = self._get_latent(observation)
+        (distribution, _), _, _ = self._get_action_dist_from_latent(latent_pi, latent_ex, observation, latent_sde)
         return distribution.get_actions(deterministic=deterministic)
 
     def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
@@ -661,8 +666,8 @@ class ActorCriticPolicy(BasePolicy):
         :return: estimated value, log likelihood of taking those actions
             and entropy of the action distribution.
         """
-        latent_pi, latent_vf, latent_sde = self._get_latent(obs)
-        (distribution, zstd), action_mu, channel = self._get_action_dist_from_latent(latent_pi, obs, latent_sde)
+        latent_pi, latent_vf, latent_ex, latent_sde = self._get_latent(obs)
+        (distribution, zstd), action_mu, channel = self._get_action_dist_from_latent(latent_pi, latent_ex, obs, latent_sde)
         log_prob = distribution.log_prob(actions)
         values = self.value_net(latent_vf)
         return values, log_prob, distribution.entropy(), zstd, action_mu, channel

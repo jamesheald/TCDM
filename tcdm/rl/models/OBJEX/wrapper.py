@@ -143,7 +143,8 @@ class PGDMObsWrapperObjQvelForce(gym.ObservationWrapper):
         total_normal_force = self.normal_force()
 
         new_obs = np.concatenate((obs,
-                                    self.env.unwrapped._base_env.physics.data.qvel[-6:],
+                                    self.env.unwrapped._base_env.physics.data.qvel[-6:-3]*10.,
+                                    self.env.unwrapped._base_env.physics.data.qvel[-3:],
                                     total_normal_force[None]/10.), 
                                     axis=0).astype(np.float32)
         

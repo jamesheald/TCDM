@@ -172,7 +172,6 @@ class MlpExtractor(nn.Module):
         shared_net, policy_net, value_net, explore_net = [], [], [], []
         policy_only_layers = []  # Layer sizes of the network that only belongs to the policy network
         value_only_layers = []  # Layer sizes of the network that only belongs to the value network
-        explore_layers = []
         last_layer_dim_shared = feature_dim
 
         # Iterate through the shared layers and build the shared parts of the network
@@ -213,8 +212,8 @@ class MlpExtractor(nn.Module):
 
             if ex_layer_size is not None:
                 assert isinstance(ex_layer_size, int), "Error: net_arch[-1]['ex'] must only contain integers."
-                value_net.append(nn.Linear(last_layer_dim_ex, ex_layer_size))
-                value_net.append(activation_fn())
+                explore_net.append(nn.Linear(last_layer_dim_ex, ex_layer_size))
+                explore_net.append(activation_fn())
                 last_layer_dim_ex = ex_layer_size
 
         # Save dim, used to create the distributions

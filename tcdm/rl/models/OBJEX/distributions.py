@@ -725,12 +725,13 @@ class FullGaussianDistribution(Distribution):
         :param log_std_init: Initial value for the log standard deviation
         :return:
         """
-        # mean_actions = nn.Linear(latent_dim, self.action_dim)
-        mean_actions_and_zlogstd = nn.Linear(latent_dim, self.action_dim + 7)
+        mean_actions = nn.Linear(latent_dim, self.action_dim)
+        # mean_actions_and_zlogstd = nn.Linear(latent_dim, self.action_dim + 7)
         # TODO: allow action dependent std
         log_std = nn.Parameter(th.ones(self.action_dim) * log_std_init, requires_grad=True)
-        zlog_std = nn.Parameter(th.ones(7) * log_std_init, requires_grad=True)
-        return mean_actions_and_zlogstd, log_std, zlog_std
+        # zlog_std = nn.Parameter(th.ones(7) * log_std_init, requires_grad=True)
+        # return mean_actions_and_zlogstd, log_std, zlog_std
+        return mean_actions, log_std
 
     def proba_distribution(self, mean_actions: th.Tensor, zlogstd: th.Tensor, log_std: th.Tensor, channel: th.Tensor) -> "FullGaussianDistribution":
         """
