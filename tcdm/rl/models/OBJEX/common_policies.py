@@ -550,7 +550,8 @@ class ActorCriticPolicy(BasePolicy):
 
         self.value_net = nn.Linear(self.mlp_extractor.latent_dim_vf, 1)
 
-        self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, 7)
+        # self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, 7)
+        self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.action_dim + 7)
 
         # Init weights: use orthogonal initialization
         # with small initial weight for the output
@@ -583,7 +584,7 @@ class ActorCriticPolicy(BasePolicy):
         latent_pi, latent_vf, latent_ex, latent_sde = self._get_latent(obs)
         # Evaluate the values for the given observations
         values = self.value_net(latent_vf)
-        (distribution, _), _, _ = self._get_action_dist_from_latent(latent_pi, latent_ex, obs, latent_sde=latent_sde)
+        (distribution, _, _), _, _ = self._get_action_dist_from_latent(latent_pi, latent_ex, obs, latent_sde=latent_sde)
         actions = distribution.get_actions(deterministic=deterministic)
         log_prob = distribution.log_prob(actions)
         return actions, values, log_prob
@@ -621,13 +622,20 @@ class ActorCriticPolicy(BasePolicy):
         # mean_actions = th.tanh(mean_actions_and_zlogstd[..., :self.action_dim])
         mean_actions = th.tanh(self.action_net(latent_pi))
         # zlog_std = mean_actions_and_zlogstd[..., self.action_dim:]
-        zlog_std = self.explore_net(latent_ex)
+        
+        # zlog_std = self.explore_net(latent_ex)
+        log_stds = self.explore_net(latent_ex)
+        log_std = log_stds[..., :self.action_dim]
+        zlog_std = log_stds[..., self.action_dim:]
 
         channel = self.get_synergies(mean_actions, obs, self.dynamics.model)
 
+        touching_object = obs[:,-1] > 0
+
         if isinstance(self.action_dist, FullGaussianDistribution):
             # return self.action_dist.proba_distribution(mean_actions, zlog_std, self.log_std, channel), mean_actions_and_zlogstd[..., :self.action_dim], channel
-            return self.action_dist.proba_distribution(mean_actions, zlog_std, self.log_std, channel), mean_actions, channel
+            # return self.action_dist.proba_distribution(mean_actions, zlog_std, self.log_std, channel), mean_actions, channel
+            return self.action_dist.proba_distribution(mean_actions, zlog_std, log_std, channel, touching_object), mean_actions, channel
         elif isinstance(self.action_dist, DiagGaussianDistribution):
             return self.action_dist.proba_distribution(mean_actions, self.log_std)
         elif isinstance(self.action_dist, CategoricalDistribution):
@@ -653,7 +661,7 @@ class ActorCriticPolicy(BasePolicy):
         :return: Taken action according to the policy
         """
         latent_pi, _, latent_ex, latent_sde = self._get_latent(observation)
-        (distribution, _), _, _ = self._get_action_dist_from_latent(latent_pi, latent_ex, observation, latent_sde)
+        (distribution, _, _), _, _ = self._get_action_dist_from_latent(latent_pi, latent_ex, observation, latent_sde)
         return distribution.get_actions(deterministic=deterministic)
 
     def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
@@ -667,10 +675,10 @@ class ActorCriticPolicy(BasePolicy):
             and entropy of the action distribution.
         """
         latent_pi, latent_vf, latent_ex, latent_sde = self._get_latent(obs)
-        (distribution, zstd), action_mu, channel = self._get_action_dist_from_latent(latent_pi, latent_ex, obs, latent_sde)
+        (distribution, ostd, zstd), action_mu, channel = self._get_action_dist_from_latent(latent_pi, latent_ex, obs, latent_sde)
         log_prob = distribution.log_prob(actions)
         values = self.value_net(latent_vf)
-        return values, log_prob, distribution.entropy(), zstd, action_mu, channel
+        return values, log_prob, distribution.entropy(), ostd, zstd, action_mu, channel
 
 
 class ActorCriticCnnPolicy(ActorCriticPolicy):

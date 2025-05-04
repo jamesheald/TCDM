@@ -213,8 +213,11 @@ class PPO(OnPolicyAlgorithm):
                 
                 delta_obs = rollout_data.next_observations-rollout_data.observations
                 # dynamics_loss = ((s_prime_mean - delta_obs[...,self.controlled_variables])**2).mean()
-                dynamics_loss = F.mse_loss(s_prime_mean, delta_obs[...,self.controlled_variables])
                 # dynamics_loss = -log_likelihood_diagonal_Gaussian(delta_obs[:,control_variables], s_prime_mean, s_prime_log_var).sum(axis=-1)
+                # dynamics_loss = F.mse_loss(s_prime_mean, delta_obs[...,self.controlled_variables])
+                # only train the dynamics model when touching the object
+                touching_object = rollout_data.observations[:,1] > 0
+                dynamics_loss = F.mse_loss(s_prime_mean[touching_object], delta_obs[touching_object][:,self.controlled_variables])
 
                 dynamics_losses.append(dynamics_loss.item())
 
@@ -247,6 +250,7 @@ class PPO(OnPolicyAlgorithm):
             total_sum = 0.0
             total_count = 0
             CV = []
+            ostds = []
             for rollout_data in self.rollout_buffer.get(self.batch_size):
                 CV.append(abs(rollout_data.observations[...,-7:]).mean(dim=0))
                 actions = rollout_data.actions
@@ -260,7 +264,10 @@ class PPO(OnPolicyAlgorithm):
                 if self.use_sde:
                     self.policy.reset_noise(self.batch_size)
 
-                values, log_prob, entropy, zstd, action_mu, channel = self.policy.evaluate_actions(rollout_data.observations, actions)
+                values, log_prob, entropy, ostd, zstd, action_mu, channel = self.policy.evaluate_actions(rollout_data.observations, actions)
+
+                with th.no_grad():
+                    ostds.append(ostd.mean().cpu().numpy())
                 
                 non_nan_mask = ~th.isnan(zstd)
                 sum_non_nan = th.sum(zstd[non_nan_mask])
@@ -379,7 +386,8 @@ class PPO(OnPolicyAlgorithm):
         self.logger.record("train/loss", loss.item())
         self.logger.record("train/explained_variance", explained_var)
         if hasattr(self.policy, "log_std"):
-            self.logger.record("train/std", th.exp(self.policy.log_std).mean().item())
+            # self.logger.record("train/std", th.exp(self.policy.log_std).mean().item())
+            self.logger.record("train/std", np.mean(ostds))
             self.logger.record("train/stdz", zstd_mean.item())
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")

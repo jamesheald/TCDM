@@ -733,7 +733,7 @@ class FullGaussianDistribution(Distribution):
         # return mean_actions_and_zlogstd, log_std, zlog_std
         return mean_actions, log_std
 
-    def proba_distribution(self, mean_actions: th.Tensor, zlogstd: th.Tensor, log_std: th.Tensor, channel: th.Tensor) -> "FullGaussianDistribution":
+    def proba_distribution(self, mean_actions: th.Tensor, zlogstd: th.Tensor, log_std: th.Tensor, channel: th.Tensor, touching_object: th.Tensor) -> "FullGaussianDistribution":
         """
         Create the distribution given its parameters (mean, std)
 
@@ -743,22 +743,24 @@ class FullGaussianDistribution(Distribution):
         :return:
         """
         # mean_actions = mean_actions_and_zlogstd[..., :self.action_dim]
-        action_std = th.ones_like(mean_actions) * log_std.exp()
+        action_std = th.ones_like(mean_actions) * (log_std-1.6).exp()
         diagonal = th.diag_embed(action_std**2)
-        
+        covariance_matrix = diagonal
+
         intermediate = th.bmm(channel, th.diag_embed((zlogstd-1.6).exp()**2))
-        # zlogstd_batched = zlogstd.unsqueeze(0).expand(channel.shape[0], -1)
-        # intermediate = th.bmm(channel, th.diag_embed((zlogstd_batched).exp()**2))
         low_rank = th.bmm(intermediate, channel.transpose(1, 2))
 
-        covariance_matrix = diagonal + low_rank
+        # only add low rank component when touching object
+        # covariance_matrix += low_rank * touching_object[:,None,None]
+        covariance_matrix[touching_object] += low_rank[touching_object]
+
         self.distribution = MultivariateNormal(loc=mean_actions, covariance_matrix=covariance_matrix)
 
         # nonzero_mask = (channel != 0.).any(dim=(1, 2)) # shape [B], bool
         # condition = nonzero_mask[:, None].expand_as(zlogstd)
 
-        # return self, th.where(condition, (zlogstd-1.6).exp(), th.full(zlogstd.shape, float('nan'), device=zlogstd.device, dtype=zlogstd.dtype))
-        return self, (zlogstd-1.6).exp()
+        return self, (log_std-1.6).exp(), th.where(touching_object[:,None].expand_as(zlogstd), (zlogstd-1.6).exp(), th.full(zlogstd.shape, float('nan'), device=zlogstd.device, dtype=zlogstd.dtype))
+        # return self, (log_std-1.6).exp(), (zlogstd-1.6).exp()
 
     def log_prob(self, actions: th.Tensor) -> th.Tensor:
         """
