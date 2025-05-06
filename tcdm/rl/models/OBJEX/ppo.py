@@ -19,6 +19,15 @@ from tcdm.rl.models.OBJEX.dynamics import Dynamics
 from torch import nn
 from torch.distributions import Normal, Independent
 
+class EntropyCoefModule(nn.Module):
+    def __init__(self, names, ent_coefs, device='cuda'):
+        super().__init__()
+        assert len(names) == len(ent_coefs), "Names and ent_coefs must be the same length"
+        self.params = nn.ParameterDict({
+            name: nn.Parameter(th.ones(1, device=device) * np.log(ent_coef))
+            for name, ent_coef in zip(names, ent_coefs)
+        })
+
 class PPO(OnPolicyAlgorithm):
     """
     Proximal Policy Optimization algorithm (PPO) (clip version)
@@ -96,7 +105,8 @@ class PPO(OnPolicyAlgorithm):
         controlled_variables: List = [],
         dynamics_dropout: List = [],
         dynamics_n_epochs: int = 40,
-        target_entropy: float = -7,
+        target_entropy: Dict[str, Any] = None,
+        ent_coef_lr: float = 1e-5,
         tensorboard_log: Optional[str] = None,
         create_eval_env: bool = False,
         policy_kwargs: Optional[Dict[str, Any]] = None,
@@ -171,6 +181,7 @@ class PPO(OnPolicyAlgorithm):
         self.pi_and_Q_observations = pi_and_Q_observations
         self.controlled_variables = controlled_variables
         self.target_entropy = target_entropy
+        self.ent_coef_lr = ent_coef_lr
 
         self.action_dim = self.env.action_space.shape[0]
 
@@ -201,12 +212,17 @@ class PPO(OnPolicyAlgorithm):
         )
 
         self.policy.log_ent_coef = SimpleNamespace()
-        
-        self.policy.log_ent_coef.param = nn.Parameter(th.ones(1, device='cuda') * np.log(self.ent_coef), requires_grad=True).to("cuda")
 
-        self.policy.log_ent_coef.optimizer = th.optim.Adam([self.policy.log_ent_coef.param],
-                                                           lr=1e-5,
-        )
+        names = ['diagonal', 'explore']
+        ent_coefs = [self.ent_coef] * len(names)
+        self.policy.log_ent_coef = EntropyCoefModule(names, ent_coefs)
+
+        self.policy.log_ent_coef.optimizer = th.optim.Adam(self.policy.log_ent_coef.parameters(), lr=self.ent_coef_lr)
+        
+        # self.policy.log_ent_coef.param = nn.Parameter(th.ones(1, device='cuda') * np.log(self.ent_coef), requires_grad=True).to("cuda")
+        # self.policy.log_ent_coef.optimizer = th.optim.Adam([self.policy.log_ent_coef.param],
+                                                            # lr=self.ent_coef_lr,
+        # )
 
     def train(self) -> None:
         """
@@ -354,7 +370,18 @@ class PPO(OnPolicyAlgorithm):
 
                 entropy_losses.append(entropy_loss.item())
 
-                loss = policy_loss + self.vf_coef * value_loss - self.policy.log_ent_coef.param.exp().detach() * th.mean(explore_entropy) - self.ent_coef * th.mean(diagonal_entropy) # + self.ent_coef * entropy_loss + self.guide_coef * guide_dist
+                if self.target_entropy['diagonal'] is None:
+                    diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy)
+                else:
+                    diagonal_entropy_loss = -self.policy.log_ent_coef.params['diagonal'].exp().detach() * th.mean(diagonal_entropy)
+
+                loss = (
+                    policy_loss
+                    + self.vf_coef * value_loss
+                    - self.policy.log_ent_coef.params['explore'].exp().detach() * th.mean(explore_entropy)
+                    + diagonal_entropy_loss
+                    # + self.guide_coef * guide_dist
+                 ) # + self.ent_coef * entropy_loss
 
                 # Calculate approximate form of reverse KL Divergence for early stopping
                 # see issue #417: https://github.com/DLR-RM/stable-baselines3/issues/417
@@ -380,11 +407,20 @@ class PPO(OnPolicyAlgorithm):
 
                 if sum(touching_object) > 0:
 
-                    ent_coef_loss = self.policy.log_ent_coef.param * (explore_entropy.detach() - self.target_entropy).mean()
+                    # self.policy.log_ent_coef.params['diagonal']
+                    # self.policy.log_ent_coef.params['explore']
+
+                    if self.target_entropy['diagonal'] is None:
+                        ent_coef_loss = self.policy.log_ent_coef.params['explore'] * (explore_entropy.detach() - self.target_entropy['explore']).mean()
+                    else:
+                        ent_coef_loss = (
+                            self.policy.log_ent_coef.params['explore'] * (explore_entropy.detach() - self.target_entropy['explore']).mean()
+                            + self.policy.log_ent_coef.params['diagonal'] * (diagonal_entropy.detach() - self.target_entropy['diagonal']).mean()
+                            )
                     self.policy.log_ent_coef.optimizer.zero_grad()
                     ent_coef_loss.backward()
                     # Clip grad norm
-                    th.nn.utils.clip_grad_norm_(self.policy.log_ent_coef.param, self.max_grad_norm)
+                    th.nn.utils.clip_grad_norm_(self.policy.log_ent_coef.parameters(), self.max_grad_norm)
                     self.policy.log_ent_coef.optimizer.step()
 
                 # with th.no_grad():

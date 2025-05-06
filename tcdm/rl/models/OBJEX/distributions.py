@@ -784,7 +784,6 @@ class FullGaussianDistribution(Distribution):
         else:
             return self, action_std, explore_std, diagonal_entropy, explore_entropy
             
-
     def log_prob(self, actions: th.Tensor) -> th.Tensor:
         """
         Get the log probabilities of actions according to the distribution.

@@ -110,6 +110,7 @@ def objex_ppo_trainer(config, resume_model=None):
                         pi_and_Q_observations=env.get_attr('pi_and_Q_observations')[0],
                         controlled_variables=env.get_attr('controlled_variables')[0],
                         target_entropy=config.agent.params.target_entropy,
+                        ent_coef_lr=config.agent.params.ent_coef_lr,
                         policy_kwargs=policy_kwargs
                     )
         # initialize the agent with behavior cloning if desired

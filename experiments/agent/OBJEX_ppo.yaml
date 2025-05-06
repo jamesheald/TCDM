@@ -22,7 +22,10 @@ params:
   state_dependent_std:
     diagonal: True
     low_rank: True
-  target_entropy: -7
+  target_entropy:
+    diagonal: -30 # or null
+    explore: -7
+  ent_coef_lr: 1e-5
 policy_kwargs:                                              # Policy parameters (initial STD and architecture)
   net_arch:
     - pi: [256, 128]
