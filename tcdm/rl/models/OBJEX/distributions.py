@@ -11,6 +11,8 @@ from torch.distributions import Bernoulli, Categorical, Normal
 
 from stable_baselines3.common.preprocessing import get_action_dim
 
+from torch.distributions import Normal, Independent
+
 from jax import numpy as jp
 
 class Distribution(ABC):
@@ -709,11 +711,12 @@ class FullGaussianDistribution(Distribution):
     :param action_dim:  Dimension of the action space.
     """
 
-    def __init__(self, action_dim: int):
+    def __init__(self, action_dim: int, **kwargs):
         super(FullGaussianDistribution, self).__init__()
         self.action_dim = action_dim
         self.mean_actions = None
         self.log_std = None
+        self.state_dependent_std = kwargs['state_dependent_std']
 
     def proba_distribution_net(self, latent_dim: int, log_std_init: float = 0.0) -> Tuple[nn.Module, nn.Parameter]:
         """
@@ -726,14 +729,19 @@ class FullGaussianDistribution(Distribution):
         :return:
         """
         mean_actions = nn.Linear(latent_dim, self.action_dim)
-        # mean_actions_and_zlogstd = nn.Linear(latent_dim, self.action_dim + 7)
-        # TODO: allow action dependent std
-        log_std = nn.Parameter(th.ones(self.action_dim) * log_std_init, requires_grad=True)
-        # zlog_std = nn.Parameter(th.ones(7) * log_std_init, requires_grad=True)
-        # return mean_actions_and_zlogstd, log_std, zlog_std
+
+        if self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']==False:
+            log_std = nn.Parameter(th.ones(self.action_dim + 7) * log_std_init, requires_grad=True)
+        elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
+            log_std = nn.Parameter(th.ones(self.action_dim) * log_std_init, requires_grad=True)
+        elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
+            log_std = nn.Parameter(th.ones(7) * log_std_init, requires_grad=True)
+        else:
+            log_std = []
+
         return mean_actions, log_std
 
-    def proba_distribution(self, mean_actions: th.Tensor, zlogstd: th.Tensor, log_std: th.Tensor, channel: th.Tensor, touching_object: th.Tensor) -> "FullGaussianDistribution":
+    def proba_distribution(self, mean_actions: th.Tensor, zlogstd: th.Tensor, log_std: th.Tensor, channel: th.Tensor, touching_object: th.Tensor, log_std_init: float = 0.0) -> "FullGaussianDistribution":
         """
         Create the distribution given its parameters (mean, std)
 
@@ -742,25 +750,40 @@ class FullGaussianDistribution(Distribution):
         :param channel:
         :return:
         """
-        # mean_actions = mean_actions_and_zlogstd[..., :self.action_dim]
-        action_std = th.ones_like(mean_actions) * (log_std-1.6).exp()
+        if self.state_dependent_std['diagonal']:
+            action_std = (log_std+log_std_init).exp()
+        else:
+            action_std = th.ones_like(mean_actions) * (log_std).exp()
+
+        if self.state_dependent_std['low_rank']:
+            explore_std = (zlogstd+log_std_init).exp()
+        else:
+            explore_std = (zlogstd[None,:].repeat(channel.shape[0],1)).exp()
+
         diagonal = th.diag_embed(action_std**2)
         covariance_matrix = diagonal
 
-        intermediate = th.bmm(channel, th.diag_embed((zlogstd-1.6).exp()**2))
-        low_rank = th.bmm(intermediate, channel.transpose(1, 2))
+        diagonal_dist = Independent(Normal(loc=mean_actions, scale=action_std), 1)
+        diagonal_entropy = diagonal_dist.entropy()
+        if touching_object.sum() == 0:
+            explore_entropy = th.tensor(0.0, device=zlogstd.device)
+        else:
+            explore_dist = Independent(Normal(loc=th.zeros_like(zlogstd[touching_object]), scale=explore_std[touching_object]), 1)
+            explore_entropy = explore_dist.entropy()
+        
+            intermediate = th.bmm(channel, th.diag_embed(explore_std**2))
+            low_rank = th.bmm(intermediate, channel.transpose(1, 2))
 
-        # only add low rank component when touching object
-        # covariance_matrix += low_rank * touching_object[:,None,None]
-        covariance_matrix[touching_object] += low_rank[touching_object]
+            # only add low rank component when touching object
+            covariance_matrix[touching_object] += low_rank[touching_object]
 
         self.distribution = MultivariateNormal(loc=mean_actions, covariance_matrix=covariance_matrix)
 
-        # nonzero_mask = (channel != 0.).any(dim=(1, 2)) # shape [B], bool
-        # condition = nonzero_mask[:, None].expand_as(zlogstd)
-
-        return self, (log_std-1.6).exp(), th.where(touching_object[:,None].expand_as(zlogstd), (zlogstd-1.6).exp(), th.full(zlogstd.shape, float('nan'), device=zlogstd.device, dtype=zlogstd.dtype))
-        # return self, (log_std-1.6).exp(), (zlogstd-1.6).exp()
+        if self.state_dependent_std['low_rank']:
+            return self, action_std, th.where(touching_object[:,None].expand_as(explore_std), explore_std, th.full(explore_std.shape, float('nan'), device=zlogstd.device, dtype=explore_std.dtype)), diagonal_entropy, explore_entropy
+        else:
+            return self, action_std, explore_std, diagonal_entropy, explore_entropy
+            
 
     def log_prob(self, actions: th.Tensor) -> th.Tensor:
         """

@@ -16,6 +16,9 @@ from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedul
 from stable_baselines3.common.utils import explained_variance, get_schedule_fn
 from tcdm.rl.models.OBJEX.dynamics import Dynamics
 
+from torch import nn
+from torch.distributions import Normal, Independent
+
 class PPO(OnPolicyAlgorithm):
     """
     Proximal Policy Optimization algorithm (PPO) (clip version)
@@ -93,6 +96,7 @@ class PPO(OnPolicyAlgorithm):
         controlled_variables: List = [],
         dynamics_dropout: List = [],
         dynamics_n_epochs: int = 40,
+        target_entropy: float = -7,
         tensorboard_log: Optional[str] = None,
         create_eval_env: bool = False,
         policy_kwargs: Optional[Dict[str, Any]] = None,
@@ -166,6 +170,7 @@ class PPO(OnPolicyAlgorithm):
         self.dynamics_n_epochs = dynamics_n_epochs
         self.pi_and_Q_observations = pi_and_Q_observations
         self.controlled_variables = controlled_variables
+        self.target_entropy = target_entropy
 
         self.action_dim = self.env.action_space.shape[0]
 
@@ -195,38 +200,59 @@ class PPO(OnPolicyAlgorithm):
                                                        lr=self.dynamics_learning_rate,
         )
 
+        self.policy.log_ent_coef = SimpleNamespace()
+        
+        self.policy.log_ent_coef.param = nn.Parameter(th.ones(1, device='cuda') * np.log(self.ent_coef), requires_grad=True).to("cuda")
+
+        self.policy.log_ent_coef.optimizer = th.optim.Adam([self.policy.log_ent_coef.param],
+                                                           lr=1e-5,
+        )
+
     def train(self) -> None:
         """
         Update policy using the currently gathered rollout buffer.
         """
 
         dynamics_losses = []
-
         for epoch in range(self.dynamics_n_epochs):
             for rollout_data in self.rollout_buffer.get(self.batch_size):
-                actions = rollout_data.actions
-                if isinstance(self.action_space, spaces.Discrete):
-                    # Convert discrete action from float to long
-                    actions = rollout_data.actions.long().flatten()              
 
-                s_prime_mean, _ = self.policy.dynamics.model(rollout_data.observations, th.clamp(actions, -1., 1.))
-                
-                delta_obs = rollout_data.next_observations-rollout_data.observations
-                # dynamics_loss = ((s_prime_mean - delta_obs[...,self.controlled_variables])**2).mean()
-                # dynamics_loss = -log_likelihood_diagonal_Gaussian(delta_obs[:,control_variables], s_prime_mean, s_prime_log_var).sum(axis=-1)
-                # dynamics_loss = F.mse_loss(s_prime_mean, delta_obs[...,self.controlled_variables])
                 # only train the dynamics model when touching the object
                 touching_object = rollout_data.observations[:,1] > 0
-                dynamics_loss = F.mse_loss(s_prime_mean[touching_object], delta_obs[touching_object][:,self.controlled_variables])
 
-                dynamics_losses.append(dynamics_loss.item())
+                if sum(touching_object) > 0:
 
-                # Optimization step
-                self.policy.dynamics.optimizer.zero_grad()
-                dynamics_loss.backward()
-                # Clip grad norm
-                th.nn.utils.clip_grad_norm_(self.policy.dynamics.model.parameters(), self.max_grad_norm)
-                self.policy.dynamics.optimizer.step()
+                    actions = rollout_data.actions
+                    if isinstance(self.action_space, spaces.Discrete):
+                        # Convert discrete action from float to long
+                        actions = rollout_data.actions.long().flatten()              
+
+                    s_prime_mean, s_prime_log_var = self.policy.dynamics.model(rollout_data.observations, th.clamp(actions, -1., 1.))
+                    
+                    delta_obs = rollout_data.next_observations-rollout_data.observations
+
+                    # only train the dynamics model when touching the object
+                    touching_object = rollout_data.observations[:,1] > 0
+
+                    # log likelihood loss
+                    dist = Independent(Normal(loc=s_prime_mean[touching_object], scale=(0.5*s_prime_log_var[touching_object]).exp()), 1)
+                    log_probs = dist.log_prob(delta_obs[touching_object][:,self.controlled_variables]) # shape: [batch_size]
+                    dynamics_loss = -log_probs.mean()
+
+                    # mse loss
+                    # dynamics_loss = F.mse_loss(s_prime_mean[touching_object], delta_obs[touching_object][:,self.controlled_variables])
+
+                    # Optimization step
+                    self.policy.dynamics.optimizer.zero_grad()
+                    dynamics_loss.backward()
+                    # Clip grad norm
+                    th.nn.utils.clip_grad_norm_(self.policy.dynamics.model.parameters(), self.max_grad_norm)
+                    self.policy.dynamics.optimizer.step()
+
+                    dynamics_losses.append(dynamics_loss.item())
+
+        if len(dynamics_losses) == 0:
+            dynamics_losses = [0.]
 
         # Update optimizer learning rate
         self._update_learning_rate(self.policy.optimizer)
@@ -240,6 +266,9 @@ class PPO(OnPolicyAlgorithm):
         pg_losses, value_losses = [], []
         clip_fractions = []
         # guide_losses = []
+
+        diagonal_entropies = []
+        explore_entropies = []
 
         continue_training = True
 
@@ -264,7 +293,7 @@ class PPO(OnPolicyAlgorithm):
                 if self.use_sde:
                     self.policy.reset_noise(self.batch_size)
 
-                values, log_prob, entropy, ostd, zstd, action_mu, channel = self.policy.evaluate_actions(rollout_data.observations, actions)
+                values, log_prob, entropy, diagonal_entropy, explore_entropy, ostd, zstd, action_mu, channel = self.policy.evaluate_actions(rollout_data.observations, actions)
 
                 with th.no_grad():
                     ostds.append(ostd.mean().cpu().numpy())
@@ -325,7 +354,7 @@ class PPO(OnPolicyAlgorithm):
 
                 entropy_losses.append(entropy_loss.item())
 
-                loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss # + self.guide_coef * guide_dist
+                loss = policy_loss + self.vf_coef * value_loss - self.policy.log_ent_coef.param.exp().detach() * th.mean(explore_entropy) - self.ent_coef * th.mean(diagonal_entropy) # + self.ent_coef * entropy_loss + self.guide_coef * guide_dist
 
                 # Calculate approximate form of reverse KL Divergence for early stopping
                 # see issue #417: https://github.com/DLR-RM/stable-baselines3/issues/417
@@ -349,6 +378,15 @@ class PPO(OnPolicyAlgorithm):
                 th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.policy.optimizer.step()
 
+                if sum(touching_object) > 0:
+
+                    ent_coef_loss = self.policy.log_ent_coef.param * (explore_entropy.detach() - self.target_entropy).mean()
+                    self.policy.log_ent_coef.optimizer.zero_grad()
+                    ent_coef_loss.backward()
+                    # Clip grad norm
+                    th.nn.utils.clip_grad_norm_(self.policy.log_ent_coef.param, self.max_grad_norm)
+                    self.policy.log_ent_coef.optimizer.step()
+
                 # with th.no_grad():
                 #     _, _, _, _, action_mu_new, _ = self.policy.evaluate_actions(rollout_data.observations, actions)
                 #     P = th.bmm(channel, channel.transpose(1, 2)) # Shape [batch_size, 30, 30]
@@ -359,6 +397,9 @@ class PPO(OnPolicyAlgorithm):
                 #     guide_dist_masked = guide_dist * nonzero_mask
                 #     guide_dist = guide_dist_masked.sum() / nonzero_mask.sum()
                 #     guide_losses.append(guide_dist.item())
+
+                diagonal_entropies.append(diagonal_entropy.detach().cpu().numpy().mean())
+                explore_entropies.append(explore_entropy.detach().cpu().numpy().mean())
 
             if not continue_training:
                 break
@@ -377,6 +418,9 @@ class PPO(OnPolicyAlgorithm):
         self.logger.record("train/CV5", th.stack(CV).mean(dim=0)[5].cpu().numpy().item())
         self.logger.record("train/CV6", th.stack(CV).mean(dim=0)[6].cpu().numpy().item())
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
+        self.logger.record("train/diagonal_entropy", np.mean(diagonal_entropies))
+        self.logger.record("train/explore_entropy", np.mean(explore_entropies))
+        self.logger.record("train/ent_coeff", self.policy.log_ent_coef.param.exp().item())
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
         # self.logger.record("train/guide_loss", np.mean(guide_losses))

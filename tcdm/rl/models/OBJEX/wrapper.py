@@ -142,6 +142,7 @@ class PGDMObsWrapperObjQvelForce(gym.ObservationWrapper):
 
         total_normal_force = self.normal_force()
 
+        # controlled variable elements are scaled so that they have the same order of magnitude
         new_obs = np.concatenate((obs,
                                     self.env.unwrapped._base_env.physics.data.qvel[-6:-3]*10.,
                                     self.env.unwrapped._base_env.physics.data.qvel[-3:],

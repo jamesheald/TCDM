@@ -65,7 +65,7 @@ class Synergies(nn.Module):
         if self.use_gram_schmidt:
             synergies = self.modified_gram_schmidt(F.T)
         else:
-            synergies = F / (F.norm(dim=0, keepdim=True) + 1e-8)
+            synergies = F / (F.norm(dim=-1, keepdim=True) + 1e-8)
             synergies = synergies.T
 
         return synergies
