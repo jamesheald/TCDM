@@ -113,6 +113,8 @@ def objex_ppo_trainer(config, resume_model=None):
                         target_entropy=config.agent.params.target_entropy,
                         clip_grad_ent_coef=config.agent.params.clip_grad_ent_coef,
                         ent_coef_lr=config.agent.params.ent_coef_lr,
+                        diagonal_entropy_when_touching=config.agent.params.diagonal_entropy_when_touching,
+                        low_rank_ent_scale=config.agent.params.low_rank_ent_scale,
                         policy_kwargs=policy_kwargs
                     )
         # initialize the agent with behavior cloning if desired

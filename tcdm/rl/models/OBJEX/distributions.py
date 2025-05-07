@@ -705,6 +705,7 @@ def kl_divergence(dist_true: Distribution, dist_pred: Distribution) -> th.Tensor
         return th.distributions.kl_divergence(dist_true.distribution, dist_pred.distribution)
     
 from torch.distributions import MultivariateNormal
+# SquashedDiagGaussianDistribution
 class FullGaussianDistribution(Distribution):
     """
     Gaussian distribution with diagonal covariance matrix, for continuous actions.
@@ -712,13 +713,15 @@ class FullGaussianDistribution(Distribution):
     :param action_dim:  Dimension of the action space.
     """
 
-    def __init__(self, action_dim: int, **kwargs):
+    def __init__(self, action_dim: int, epsilon: float = 1e-6, **kwargs):
         super(FullGaussianDistribution, self).__init__()
         self.action_dim = action_dim
         self.mean_actions = None
         self.log_std = None
         self.state_dependent_std = kwargs['state_dependent_std']
         self.use_tanh_bijector = kwargs['use_tanh_bijector']
+        self.epsilon = epsilon # Avoid NaN (prevents division by zero or log of zero)
+        self.gaussian_actions = None
 
     def proba_distribution_net(self, latent_dim: int, log_std_init: float = 0.0) -> Tuple[nn.Module, nn.Parameter]:
         """
@@ -780,16 +783,25 @@ class FullGaussianDistribution(Distribution):
             covariance_matrix[touching_object] += low_rank[touching_object]
 
         self.distribution = MultivariateNormal(loc=mean_actions, covariance_matrix=covariance_matrix)
-        
-        if self.use_tanh_bijector:
-            self.distribution = TransformedDistribution(self.distribution, TanhTransform(cache_size=1))
 
         if self.state_dependent_std['low_rank']:
             return self, action_std, th.where(touching_object[:,None].expand_as(explore_std), explore_std, th.full(explore_std.shape, float('nan'), device=zlogstd.device, dtype=explore_std.dtype)), diagonal_entropy, explore_entropy
         else:
             return self, action_std, explore_std, diagonal_entropy, explore_entropy
             
-    def log_prob(self, actions: th.Tensor) -> th.Tensor:
+    # def log_prob(self, actions: th.Tensor) -> th.Tensor:
+        # """
+        # Get the log probabilities of actions according to the distribution.
+        # Note that you must first call the ``proba_distribution()`` method.
+
+        # :param actions:
+        # :return:
+        # """
+        # log_prob = self.distribution.log_prob(actions)
+        # return sum_independent_dims(log_prob)
+        # return log_prob
+
+    def log_prob(self, actions: th.Tensor, gaussian_actions: Optional[th.Tensor] = None) -> th.Tensor:
         """
         Get the log probabilities of actions according to the distribution.
         Note that you must first call the ``proba_distribution()`` method.
@@ -797,9 +809,20 @@ class FullGaussianDistribution(Distribution):
         :param actions:
         :return:
         """
-        log_prob = self.distribution.log_prob(actions)
-        # return sum_independent_dims(log_prob)
-        return log_prob
+        if self.use_tanh_bijector:
+            if gaussian_actions is None:
+                # It will be clipped to avoid NaN when inversing tanh
+                gaussian_actions = TanhBijector.inverse(actions)
+
+            # Log likelihood for a Gaussian distribution
+            log_prob = self.distribution.log_prob(gaussian_actions)
+            # Squash correction (from original SAC implementation)
+            # this comes from the fact that tanh is bijective and differentiable
+            log_prob -= th.sum(th.log(1 - actions ** 2 + self.epsilon), dim=1)
+            return log_prob
+        else:
+            log_prob = self.distribution.log_prob(actions)
+            return log_prob
 
     def entropy(self) -> th.Tensor:
         # return sum_independent_dims(self.distribution.entropy())
@@ -808,12 +831,28 @@ class FullGaussianDistribution(Distribution):
         else:
             return self.distribution.entropy()
 
+    # def sample(self) -> th.Tensor:
+    #     # Reparametrization trick to pass gradients
+    #     return self.distribution.rsample()
+
+    # def mode(self) -> th.Tensor:
+    #     return self.distribution.mean
+
     def sample(self) -> th.Tensor:
-        # Reparametrization trick to pass gradients
-        return self.distribution.rsample()
+        if self.use_tanh_bijector:
+            # Reparametrization trick to pass gradients
+            self.gaussian_actions = self.distribution.rsample()
+            return th.tanh(self.gaussian_actions)
+        else:
+            return self.distribution.rsample()
 
     def mode(self) -> th.Tensor:
-        return self.distribution.mean
+        if self.use_tanh_bijector:
+            self.gaussian_actions = self.distribution.mean
+            # Squash the output
+            return th.tanh(self.gaussian_actions)
+        else:
+            return self.distribution.mean
 
     def actions_from_params(self, mean_actions: th.Tensor, log_std: th.Tensor, synergies: th.Tensor, deterministic: bool = False) -> th.Tensor:
         # Update the proba distribution

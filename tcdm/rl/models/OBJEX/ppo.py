@@ -108,6 +108,8 @@ class PPO(OnPolicyAlgorithm):
         target_entropy: Dict[str, Any] = None,
         ent_coef_lr: float = 1e-5,
         clip_grad_ent_coef: bool = True,
+        diagonal_entropy_when_touching: bool = True,
+        low_rank_ent_scale: float = 1.,
         tensorboard_log: Optional[str] = None,
         create_eval_env: bool = False,
         policy_kwargs: Optional[Dict[str, Any]] = None,
@@ -184,6 +186,8 @@ class PPO(OnPolicyAlgorithm):
         self.target_entropy = target_entropy
         self.ent_coef_lr = ent_coef_lr
         self.clip_grad_ent_coef = clip_grad_ent_coef
+        self.diagonal_entropy_when_touching = diagonal_entropy_when_touching
+        self.low_rank_ent_scale = low_rank_ent_scale
 
         self.action_dim = self.env.action_space.shape[0]
 
@@ -372,11 +376,13 @@ class PPO(OnPolicyAlgorithm):
 
                 if not self.policy.use_tanh_bijector:
                     if self.target_entropy['diagonal'] is None:
-                        diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy)
-                        # diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy[~touching_object])
+                        if self.diagonal_entropy_when_touching:
+                            diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy)
+                        else:
+                            diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy[~touching_object])
                     else:
                         diagonal_entropy_loss = -self.policy.log_ent_coef.params['diagonal'].exp().detach() * th.mean(diagonal_entropy)
-                    explore_entropy_loss = -self.policy.log_ent_coef.params['explore'].exp().detach() * th.mean(explore_entropy)
+                    explore_entropy_loss = -self.policy.log_ent_coef.params['explore'].exp().detach() * th.mean(explore_entropy) * self.low_rank_ent_scale
                     entropy_loss = diagonal_entropy_loss + explore_entropy_loss
 
                 entropy_losses.append(entropy_loss.item())

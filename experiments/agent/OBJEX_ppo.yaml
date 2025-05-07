@@ -28,6 +28,8 @@ params:
   ent_coef_lr: 1e-5
   clip_grad_ent_coef: True
   use_tanh_bijector: False
+  diagonal_entropy_when_touching: True
+  low_rank_ent_scale: 1
 policy_kwargs:                                              # Policy parameters (initial STD and architecture)
   net_arch:
     - pi: [256, 128]
