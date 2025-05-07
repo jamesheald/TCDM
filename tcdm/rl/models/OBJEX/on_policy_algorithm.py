@@ -24,9 +24,10 @@ from typing import List, Type
 from torch.func import vmap, jacrev
 
 class Synergies(nn.Module):
-    def __init__(self, use_gram_schmidt=False):
+    def __init__(self, use_gram_schmidt=True, use_tanh_bijector=False):
         super().__init__()
         self.use_gram_schmidt = use_gram_schmidt
+        self.use_tanh_bijector = use_tanh_bijector
 
     def modified_gram_schmidt(self, vectors: th.Tensor, eps=1e-8) -> th.Tensor:
         """
@@ -54,7 +55,10 @@ class Synergies(nn.Module):
     
     def dynamics_forward_pass(self, linearization_point, obs, dynamics):
         obs = obs.unsqueeze(0)
-        action = linearization_point.unsqueeze(0)
+        if self.use_tanh_bijector:
+            action = th.tanh(linearization_point.unsqueeze(0))
+        else:
+            action = linearization_point.unsqueeze(0)
         y_prime_mean, _ = dynamics(obs, action)
         return y_prime_mean.squeeze(0)
 
@@ -305,7 +309,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
         callback.on_training_start(locals(), globals())
 
-        self.policy.get_synergies = Synergies(use_gram_schmidt=True).forward
+        self.policy.get_synergies = Synergies(use_gram_schmidt=True, use_tanh_bijector=self.policy.use_tanh_bijector).forward
 
         while self.num_timesteps < total_timesteps:
 

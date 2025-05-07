@@ -11,7 +11,8 @@ from torch.distributions import Bernoulli, Categorical, Normal
 
 from stable_baselines3.common.preprocessing import get_action_dim
 
-from torch.distributions import Normal, Independent
+from torch.distributions import Normal, Independent, TransformedDistribution
+from torch.distributions.transforms import TanhTransform
 
 from jax import numpy as jp
 
@@ -717,6 +718,7 @@ class FullGaussianDistribution(Distribution):
         self.mean_actions = None
         self.log_std = None
         self.state_dependent_std = kwargs['state_dependent_std']
+        self.use_tanh_bijector = kwargs['use_tanh_bijector']
 
     def proba_distribution_net(self, latent_dim: int, log_std_init: float = 0.0) -> Tuple[nn.Module, nn.Parameter]:
         """
@@ -778,6 +780,9 @@ class FullGaussianDistribution(Distribution):
             covariance_matrix[touching_object] += low_rank[touching_object]
 
         self.distribution = MultivariateNormal(loc=mean_actions, covariance_matrix=covariance_matrix)
+        
+        if self.use_tanh_bijector:
+            self.distribution = TransformedDistribution(self.distribution, TanhTransform(cache_size=1))
 
         if self.state_dependent_std['low_rank']:
             return self, action_std, th.where(touching_object[:,None].expand_as(explore_std), explore_std, th.full(explore_std.shape, float('nan'), device=zlogstd.device, dtype=explore_std.dtype)), diagonal_entropy, explore_entropy
@@ -798,7 +803,10 @@ class FullGaussianDistribution(Distribution):
 
     def entropy(self) -> th.Tensor:
         # return sum_independent_dims(self.distribution.entropy())
-        return self.distribution.entropy()
+        if self.use_tanh_bijector:
+            return None
+        else:
+            return self.distribution.entropy()
 
     def sample(self) -> th.Tensor:
         # Reparametrization trick to pass gradients

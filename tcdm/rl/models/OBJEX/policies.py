@@ -70,6 +70,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
         sde_net_arch: Optional[List[int]] = None,
         pi_and_Q_observations: List = [],
         state_dependent_std: Dict[str, Any] = None,
+        use_tanh_bijector: bool = False,
         use_expln: bool = False,
         squash_output: bool = False,
         features_extractor_class: Type[BaseFeaturesExtractor] = FlattenExtractor,
@@ -96,6 +97,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
             squash_output=squash_output,
             pi_and_Q_observations=pi_and_Q_observations,
             state_dependent_std=state_dependent_std,
+            use_tanh_bijector=use_tanh_bijector,
         )
 
         # Default network architecture, from stable-baselines
@@ -127,6 +129,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
         else:
             dist_kwargs = {
                 "state_dependent_std": self.state_dependent_std,
+                "use_tanh_bijector": use_tanh_bijector,
             }
 
         self.sde_features_extractor = None

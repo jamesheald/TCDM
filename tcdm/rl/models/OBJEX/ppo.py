@@ -107,6 +107,7 @@ class PPO(OnPolicyAlgorithm):
         dynamics_n_epochs: int = 40,
         target_entropy: Dict[str, Any] = None,
         ent_coef_lr: float = 1e-5,
+        clip_grad_ent_coef: bool = True,
         tensorboard_log: Optional[str] = None,
         create_eval_env: bool = False,
         policy_kwargs: Optional[Dict[str, Any]] = None,
@@ -182,6 +183,7 @@ class PPO(OnPolicyAlgorithm):
         self.controlled_variables = controlled_variables
         self.target_entropy = target_entropy
         self.ent_coef_lr = ent_coef_lr
+        self.clip_grad_ent_coef = clip_grad_ent_coef
 
         self.action_dim = self.env.action_space.shape[0]
 
@@ -364,24 +366,27 @@ class PPO(OnPolicyAlgorithm):
                 # Entropy loss favor exploration
                 if entropy is None:
                     # Approximate entropy when no analytical form
-                    entropy_loss = -th.mean(-log_prob)
+                    entropy_loss = self.ent_coef * -th.mean(-log_prob)
                 else:
-                    entropy_loss = -th.mean(entropy)
+                    entropy_loss = self.ent_coef * -th.mean(entropy)
+
+                if not self.policy.use_tanh_bijector:
+                    if self.target_entropy['diagonal'] is None:
+                        diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy)
+                        # diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy[~touching_object])
+                    else:
+                        diagonal_entropy_loss = -self.policy.log_ent_coef.params['diagonal'].exp().detach() * th.mean(diagonal_entropy)
+                    explore_entropy_loss = -self.policy.log_ent_coef.params['explore'].exp().detach() * th.mean(explore_entropy)
+                    entropy_loss = diagonal_entropy_loss + explore_entropy_loss
 
                 entropy_losses.append(entropy_loss.item())
-
-                if self.target_entropy['diagonal'] is None:
-                    diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy)
-                else:
-                    diagonal_entropy_loss = -self.policy.log_ent_coef.params['diagonal'].exp().detach() * th.mean(diagonal_entropy)
 
                 loss = (
                     policy_loss
                     + self.vf_coef * value_loss
-                    - self.policy.log_ent_coef.params['explore'].exp().detach() * th.mean(explore_entropy)
-                    + diagonal_entropy_loss
+                    + entropy_loss
                     # + self.guide_coef * guide_dist
-                 ) # + self.ent_coef * entropy_loss
+                 )
 
                 # Calculate approximate form of reverse KL Divergence for early stopping
                 # see issue #417: https://github.com/DLR-RM/stable-baselines3/issues/417
@@ -405,23 +410,26 @@ class PPO(OnPolicyAlgorithm):
                 th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.policy.optimizer.step()
 
-                if sum(touching_object) > 0:
+                # if sum(touching_object) > 0:
 
-                    # self.policy.log_ent_coef.params['diagonal']
-                    # self.policy.log_ent_coef.params['explore']
+                #     # self.policy.log_ent_coef.params['diagonal']
+                #     # self.policy.log_ent_coef.params['explore']
 
-                    if self.target_entropy['diagonal'] is None:
-                        ent_coef_loss = self.policy.log_ent_coef.params['explore'] * (explore_entropy.detach() - self.target_entropy['explore']).mean()
-                    else:
-                        ent_coef_loss = (
-                            self.policy.log_ent_coef.params['explore'] * (explore_entropy.detach() - self.target_entropy['explore']).mean()
-                            + self.policy.log_ent_coef.params['diagonal'] * (diagonal_entropy.detach() - self.target_entropy['diagonal']).mean()
-                            )
-                    self.policy.log_ent_coef.optimizer.zero_grad()
-                    ent_coef_loss.backward()
-                    # Clip grad norm
-                    th.nn.utils.clip_grad_norm_(self.policy.log_ent_coef.parameters(), self.max_grad_norm)
-                    self.policy.log_ent_coef.optimizer.step()
+                #     if self.target_entropy['diagonal'] is None:
+                #         ent_coef_loss = self.policy.log_ent_coef.params['explore'] * (explore_entropy.detach() - self.target_entropy['explore']).mean()
+                #     else:
+                #         ent_coef_loss = (
+                #             self.policy.log_ent_coef.params['explore'] * (explore_entropy.detach() - self.target_entropy['explore']).mean()
+                #             + self.policy.log_ent_coef.params['diagonal'] * (diagonal_entropy.detach() - self.target_entropy['diagonal']).mean()
+                #             )
+                #     self.policy.log_ent_coef.optimizer.zero_grad()
+                #     ent_coef_loss.backward()
+                #     # Clip grad norm
+                #     if self.clip_grad_ent_coef:
+                #         th.nn.utils.clip_grad_norm_(self.policy.log_ent_coef.parameters(), self.max_grad_norm)
+                #     self.policy.log_ent_coef.optimizer.step()
+
+                    # explore_entropies.append(explore_entropy.detach().cpu().numpy().mean())
 
                 # with th.no_grad():
                 #     _, _, _, _, action_mu_new, _ = self.policy.evaluate_actions(rollout_data.observations, actions)
@@ -434,8 +442,7 @@ class PPO(OnPolicyAlgorithm):
                 #     guide_dist = guide_dist_masked.sum() / nonzero_mask.sum()
                 #     guide_losses.append(guide_dist.item())
 
-                diagonal_entropies.append(diagonal_entropy.detach().cpu().numpy().mean())
-                explore_entropies.append(explore_entropy.detach().cpu().numpy().mean())
+            diagonal_entropies.append(diagonal_entropy.detach().cpu().numpy().mean())
 
             if not continue_training:
                 break
@@ -456,7 +463,8 @@ class PPO(OnPolicyAlgorithm):
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/diagonal_entropy", np.mean(diagonal_entropies))
         self.logger.record("train/explore_entropy", np.mean(explore_entropies))
-        self.logger.record("train/ent_coeff", self.policy.log_ent_coef.param.exp().item())
+        self.logger.record("train/ent_coeff_explore", self.policy.log_ent_coef.params['explore'].exp().item())
+        self.logger.record("train/ent_coeff_diagonal", self.policy.log_ent_coef.params['diagonal'].exp().item())
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
         # self.logger.record("train/guide_loss", np.mean(guide_losses))

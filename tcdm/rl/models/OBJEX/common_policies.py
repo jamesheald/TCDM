@@ -211,11 +211,12 @@ class BasePolicy(BaseModel):
         or not using a ``tanh()`` function.
     """
 
-    def __init__(self, *args, squash_output: bool = False, pi_and_Q_observations: List =[], state_dependent_std: Dict[str, Any], **kwargs):
+    def __init__(self, *args, squash_output: bool = False, pi_and_Q_observations: List =[], state_dependent_std: Dict[str, Any], use_tanh_bijector: bool, **kwargs):
         super(BasePolicy, self).__init__(*args, **kwargs)
         self._squash_output = squash_output
         self._pi_and_Q_observations = pi_and_Q_observations
         self._state_dependent_std = state_dependent_std
+        self._use_tanh_bijector = use_tanh_bijector
 
     @staticmethod
     def _dummy_schedule(progress_remaining: float) -> float:
@@ -229,12 +230,17 @@ class BasePolicy(BaseModel):
         return self._squash_output
     
     @property
-    def pi_and_Q_observations(self) -> bool:
+    def pi_and_Q_observations(self) -> List:
         """(bool) Getter for pi_and_Q_observations."""
         return self._pi_and_Q_observations
 
     @property
-    def state_dependent_std(self) -> bool:
+    def use_tanh_bijector(self) -> bool:
+        """(bool) Getter for use_tanh_bijector."""
+        return self._use_tanh_bijector
+
+    @property
+    def state_dependent_std(self) -> Dict[str, Any]:
         """(bool) Getter for state_dependent_std."""
         return self._state_dependent_std
 
@@ -629,7 +635,10 @@ class ActorCriticPolicy(BasePolicy):
         :param latent_sde: Latent code for the gSDE exploration function
         :return: Action distribution
         """
-        mean_actions = th.tanh(self.action_net(latent_pi))
+        if self.use_tanh_bijector:
+            mean_actions = self.action_net(latent_pi)
+        else:
+            mean_actions = th.tanh(self.action_net(latent_pi))
 
         if self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']:
             log_stds = self.explore_net(latent_ex)

@@ -89,6 +89,7 @@ def objex_ppo_trainer(config, resume_model=None):
         policy_kwargs = make_policy_kwargs(config.agent.policy_kwargs)
         policy_kwargs['pi_and_Q_observations']=env.get_attr('pi_and_Q_observations')[0]
         policy_kwargs['state_dependent_std']=config.agent.params.state_dependent_std
+        policy_kwargs['use_tanh_bijector']=config.agent.params.use_tanh_bijector
         model = OBJEX_PPO(
                         ActorCriticPolicy, 
                         env, verbose=1, 
@@ -110,6 +111,7 @@ def objex_ppo_trainer(config, resume_model=None):
                         pi_and_Q_observations=env.get_attr('pi_and_Q_observations')[0],
                         controlled_variables=env.get_attr('controlled_variables')[0],
                         target_entropy=config.agent.params.target_entropy,
+                        clip_grad_ent_coef=config.agent.params.clip_grad_ent_coef,
                         ent_coef_lr=config.agent.params.ent_coef_lr,
                         policy_kwargs=policy_kwargs
                     )
