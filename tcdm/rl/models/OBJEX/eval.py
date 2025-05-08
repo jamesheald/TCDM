@@ -12,7 +12,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.evaluation import evaluate_policy
 
 
-def make_eval_env(multi_proc, n_eval_envs, **kwargs):
+def make_eval_env(multi_proc, controlled_variables, n_eval_envs, **kwargs):
     """
     Corrects environment kwargs for evaluation condition
     """
@@ -22,7 +22,7 @@ def make_eval_env(multi_proc, n_eval_envs, **kwargs):
     eval_args['vid_freq'] = None
     if 'rand_reset_prob' in eval_args['task_kwargs']:
         eval_args['task_kwargs']['rand_reset_prob'] = 0
-    env = make_env(**eval_args)
+    env = make_env(**eval_args, controlled_variables=controlled_variables)
     env.has_multiproc = multi_proc
     return env
 

@@ -647,7 +647,7 @@ class TanhBijector(object):
 
 
 def make_proba_distribution(
-    action_space: gym.spaces.Space, use_sde: bool = False, dist_kwargs: Optional[Dict[str, Any]] = None
+    action_space: gym.spaces.Space, use_sde: bool = False, switching_mean: bool = False, dist_kwargs: Optional[Dict[str, Any]] = None
 ) -> Distribution:
     """
     Return an instance of Distribution for the correct type of action space
@@ -664,7 +664,10 @@ def make_proba_distribution(
     if isinstance(action_space, spaces.Box):
         assert len(action_space.shape) == 1, "Error: the action space must be a vector"
         # cls = StateDependentNoiseDistribution if use_sde else DiagGaussianDistribution
-        cls = StateDependentNoiseDistribution if use_sde else FullGaussianDistribution
+        if switching_mean:
+            cls = StateDependentNoiseDistribution if use_sde else SwitchingGaussianDistribution
+        else:
+            cls = StateDependentNoiseDistribution if use_sde else FullGaussianDistribution
         return cls(get_action_dim(action_space), **dist_kwargs)
     elif isinstance(action_space, spaces.Discrete):
         return CategoricalDistribution(action_space.n, **dist_kwargs)
@@ -705,7 +708,6 @@ def kl_divergence(dist_true: Distribution, dist_pred: Distribution) -> th.Tensor
         return th.distributions.kl_divergence(dist_true.distribution, dist_pred.distribution)
     
 from torch.distributions import MultivariateNormal
-# SquashedDiagGaussianDistribution
 class FullGaussianDistribution(Distribution):
     """
     Gaussian distribution with diagonal covariance matrix, for continuous actions.
@@ -788,6 +790,186 @@ class FullGaussianDistribution(Distribution):
             return self, action_std, th.where(touching_object[:,None].expand_as(explore_std), explore_std, th.full(explore_std.shape, float('nan'), device=zlogstd.device, dtype=explore_std.dtype)), diagonal_entropy, explore_entropy
         else:
             return self, action_std, explore_std, diagonal_entropy, explore_entropy
+            
+    # def log_prob(self, actions: th.Tensor) -> th.Tensor:
+        # """
+        # Get the log probabilities of actions according to the distribution.
+        # Note that you must first call the ``proba_distribution()`` method.
+
+        # :param actions:
+        # :return:
+        # """
+        # log_prob = self.distribution.log_prob(actions)
+        # return sum_independent_dims(log_prob)
+        # return log_prob
+
+    def log_prob(self, actions: th.Tensor, gaussian_actions: Optional[th.Tensor] = None) -> th.Tensor:
+        """
+        Get the log probabilities of actions according to the distribution.
+        Note that you must first call the ``proba_distribution()`` method.
+
+        :param actions:
+        :return:
+        """
+        if self.use_tanh_bijector:
+            if gaussian_actions is None:
+                # It will be clipped to avoid NaN when inversing tanh
+                gaussian_actions = TanhBijector.inverse(actions)
+
+            # Log likelihood for a Gaussian distribution
+            log_prob = self.distribution.log_prob(gaussian_actions)
+            # Squash correction (from original SAC implementation)
+            # this comes from the fact that tanh is bijective and differentiable
+            log_prob -= th.sum(th.log(1 - actions ** 2 + self.epsilon), dim=1)
+            return log_prob
+        else:
+            log_prob = self.distribution.log_prob(actions)
+            return log_prob
+
+    def entropy(self) -> th.Tensor:
+        # return sum_independent_dims(self.distribution.entropy())
+        if self.use_tanh_bijector:
+            return None
+        else:
+            return self.distribution.entropy()
+
+    # def sample(self) -> th.Tensor:
+    #     # Reparametrization trick to pass gradients
+    #     return self.distribution.rsample()
+
+    # def mode(self) -> th.Tensor:
+    #     return self.distribution.mean
+
+    def sample(self) -> th.Tensor:
+        if self.use_tanh_bijector:
+            # Reparametrization trick to pass gradients
+            self.gaussian_actions = self.distribution.rsample()
+            return th.tanh(self.gaussian_actions)
+        else:
+            return self.distribution.rsample()
+
+    def mode(self) -> th.Tensor:
+        if self.use_tanh_bijector:
+            self.gaussian_actions = self.distribution.mean
+            # Squash the output
+            return th.tanh(self.gaussian_actions)
+        else:
+            return self.distribution.mean
+
+    def actions_from_params(self, mean_actions: th.Tensor, log_std: th.Tensor, synergies: th.Tensor, deterministic: bool = False) -> th.Tensor:
+        # Update the proba distribution
+        # self.proba_distribution(mean_actions, log_std, synergies)
+        # return self.get_actions(deterministic=deterministic)
+        return None
+
+    def log_prob_from_params(self, mean_actions: th.Tensor, log_std: th.Tensor, synergies: th.Tensor) -> Tuple[th.Tensor, th.Tensor]:
+        """
+        Compute the log probability of taking an action
+        given the distribution parameters.
+
+        :param mean_actions:
+        :param log_std:
+        :return:
+        """
+        # actions = self.actions_from_params(mean_actions, log_std, synergies)
+        # log_prob = self.log_prob(actions)
+        # return actions, log_prob
+        return None
+    
+from torch.distributions import LowRankMultivariateNormal
+class SwitchingGaussianDistribution(Distribution):
+    """
+    Gaussian distribution with diagonal covariance matrix, for continuous actions.
+
+    :param action_dim:  Dimension of the action space.
+    """
+
+    def __init__(self, action_dim: int, epsilon: float = 1e-6, **kwargs):
+        super(SwitchingGaussianDistribution, self).__init__()
+        self.action_dim = action_dim
+        self.mean_actions = None
+        self.log_std = None
+        self.state_dependent_std = kwargs['state_dependent_std']
+        self.use_tanh_bijector = kwargs['use_tanh_bijector']
+        self.epsilon = epsilon # Avoid NaN (prevents division by zero or log of zero)
+        self.gaussian_actions = None
+
+    def proba_distribution_net(self, latent_dim: int, log_std_init: float = 0.0) -> Tuple[nn.Module, nn.Parameter]:
+        """
+        Create the layers and parameter that represent the distribution:
+        one output will be the mean of the Gaussian, the other parameter will be the
+        standard deviation (log std in fact to allow negative values)
+
+        :param latent_dim: Dimension of the last layer of the policy (before the action layer)
+        :param log_std_init: Initial value for the log standard deviation
+        :return:
+        """
+        mean_actions = nn.Linear(latent_dim, self.action_dim + 7)
+
+        if self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']==False:
+            log_std = nn.Parameter(th.ones(self.action_dim + 7) * log_std_init, requires_grad=True)
+        elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
+            log_std = nn.Parameter(th.ones(self.action_dim) * log_std_init, requires_grad=True)
+        elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
+            log_std = nn.Parameter(th.ones(7) * log_std_init, requires_grad=True)
+        else:
+            log_std = []
+
+        return mean_actions, log_std
+
+    def proba_distribution(self, mean_actions: th.Tensor, zlogstd: th.Tensor, log_std: th.Tensor, channel: th.Tensor, touching_table, log_std_init: float = 0.0) -> "FullGaussianDistribution":
+        """
+        Create the distribution given its parameters (mean, std)
+
+        :param mean_actions:
+        :param log_std:
+        :param channel:
+        :return:
+        """
+        if self.state_dependent_std['diagonal']:
+            action_std = (log_std+log_std_init).exp()
+        else:
+            action_std = th.ones_like(mean_actions[..., :self.action_dim]) * (log_std).exp()
+
+        if self.state_dependent_std['low_rank']:
+            explore_std = (zlogstd+log_std_init).exp()
+        else:
+            # explore_std = (zlogstd[None,:].repeat(channel.shape[0],1)).exp()
+            explore_std = th.ones_like(mean_actions[..., self.action_dim:]) * (zlogstd).exp()
+
+        mean_actions_full = mean_actions[..., :self.action_dim]
+        cov_diag_full = action_std**2
+        cov_factor_full = th.zeros(mean_actions.shape[0], self.action_dim, mean_actions.shape[1]-self.action_dim, device='cuda')
+
+        if (~touching_table).sum() == 0:
+
+            mean_actions_manifold = th.zeros_like(mean_actions_full)
+            cov_diag_manifold = th.zeros_like(cov_diag_full)
+            cov_factor_manifold = th.zeros_like(cov_factor_full)
+
+        else:
+
+            mean_actions_latent = mean_actions[..., self.action_dim:]
+            mean_actions_manifold = th.bmm(channel, mean_actions_latent.unsqueeze(-1)).squeeze(-1)
+            cov_factor_manifold = th.bmm(channel, th.diag_embed(explore_std))
+            cov_diag_manifold = (th.ones_like(action_std) * 1e-3)**2 # add diagonal std of 1e-3 to handle manifold changes during dynamics updates
+            # intermediate = th.bmm(channel, th.diag_embed(explore_std**2))
+            # low_rank = th.bmm(intermediate, channel.transpose(1, 2))
+            # covariance_matrix_manifold = low_rank + th.diag_embed((th.ones_like(action_std) * 1e-3)**2) # add diagonal std of 1e-3 to handle manifold changes during dynamics updates
+
+        # mean_actions = th.where(touching_table[:,None].expand_as(mean_actions_full), mean_actions_full, mean_actions_manifold)
+        # covariance_matrix = th.where(touching_table[:,None,None].expand_as(covariance_matrix_full), covariance_matrix_full, covariance_matrix_manifold)
+        # self.distribution = MultivariateNormal(loc=mean_actions, covariance_matrix=covariance_matrix)
+
+        mean_actions = th.where(touching_table[:,None].expand_as(mean_actions_full), mean_actions_full, mean_actions_manifold)
+        cov_diag = th.where(touching_table[:,None].expand_as(cov_diag_full), cov_diag_full, cov_diag_manifold)
+        cov_factor = th.where(touching_table[:,None,None].expand_as(cov_factor_full), cov_factor_full, cov_factor_manifold)
+        self.distribution = LowRankMultivariateNormal(loc=mean_actions, cov_factor=cov_factor, cov_diag=cov_diag)
+
+        if self.state_dependent_std['low_rank']:
+            return self, action_std, th.where((~touching_table)[:,None].expand_as(explore_std), explore_std, th.full(explore_std.shape, float('nan'), device=zlogstd.device, dtype=explore_std.dtype)), None, None
+        else:
+            return self, action_std, explore_std, None, None
             
     # def log_prob(self, actions: th.Tensor) -> th.Tensor:
         # """

@@ -188,6 +188,7 @@ class PPO(OnPolicyAlgorithm):
         self.clip_grad_ent_coef = clip_grad_ent_coef
         self.diagonal_entropy_when_touching = diagonal_entropy_when_touching
         self.low_rank_ent_scale = low_rank_ent_scale
+        self.switching_mean = policy_kwargs['switching_mean']
 
         self.action_dim = self.env.action_space.shape[0]
 
@@ -240,7 +241,10 @@ class PPO(OnPolicyAlgorithm):
             for rollout_data in self.rollout_buffer.get(self.batch_size):
 
                 # only train the dynamics model when touching the object
-                touching_object = rollout_data.observations[:,1] > 0
+                if self.switching_mean:
+                    touching_object = rollout_data.observations[:,-2] > 0
+                else:
+                    touching_object = rollout_data.observations[:,-1] > 0
 
                 if sum(touching_object) > 0:
 
@@ -252,9 +256,6 @@ class PPO(OnPolicyAlgorithm):
                     s_prime_mean, s_prime_log_var = self.policy.dynamics.model(rollout_data.observations, th.clamp(actions, -1., 1.))
                     
                     delta_obs = rollout_data.next_observations-rollout_data.observations
-
-                    # only train the dynamics model when touching the object
-                    touching_object = rollout_data.observations[:,1] > 0
 
                     # log likelihood loss
                     dist = Independent(Normal(loc=s_prime_mean[touching_object], scale=(0.5*s_prime_log_var[touching_object]).exp()), 1)
@@ -367,18 +368,28 @@ class PPO(OnPolicyAlgorithm):
                 value_loss = F.mse_loss(rollout_data.returns, values_pred)
                 value_losses.append(value_loss.item())
 
-                # Entropy loss favor exploration
-                if entropy is None:
-                    # Approximate entropy when no analytical form
-                    entropy_loss = self.ent_coef * -th.mean(-log_prob)
+                if self.switching_mean:
+                    touching_table = rollout_data.observations[:,-1] == 1
+                    ent_coef = th.where(touching_table, self.ent_coef , self.ent_coef * self.low_rank_ent_scale)
+                    if entropy is None:
+                        # Approximate entropy when no analytical form
+                        entropy_loss = -th.mean(ent_coef * -log_prob)
+                    else:
+                        entropy_loss = -th.mean(ent_coef * entropy)
                 else:
-                    entropy_loss = self.ent_coef * -th.mean(entropy)
+                    # Entropy loss favor exploration
+                    if entropy is None:
+                        # Approximate entropy when no analytical form
+                        entropy_loss = self.ent_coef * -th.mean(-log_prob)
+                    else:
+                        entropy_loss = self.ent_coef * -th.mean(entropy)
 
-                if not self.policy.use_tanh_bijector:
+                if not self.policy.use_tanh_bijector and not self.switching_mean:
                     if self.target_entropy['diagonal'] is None:
                         if self.diagonal_entropy_when_touching:
                             diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy)
                         else:
+                            touching_object = rollout_data.observations[:,-1] > 0
                             diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy[~touching_object])
                     else:
                         diagonal_entropy_loss = -self.policy.log_ent_coef.params['diagonal'].exp().detach() * th.mean(diagonal_entropy)
@@ -448,7 +459,7 @@ class PPO(OnPolicyAlgorithm):
                 #     guide_dist = guide_dist_masked.sum() / nonzero_mask.sum()
                 #     guide_losses.append(guide_dist.item())
 
-            diagonal_entropies.append(diagonal_entropy.detach().cpu().numpy().mean())
+            # diagonal_entropies.append(diagonal_entropy.detach().cpu().numpy().mean())
 
             if not continue_training:
                 break

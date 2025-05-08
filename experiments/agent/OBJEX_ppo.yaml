@@ -17,7 +17,7 @@ params:
   guide_coef: 0.
   dynamics_learning_rate: 1e-5
   dynamics_n_epochs: 5
-  net_arch_dyn: [500, 500]
+  net_arch_dyn: [256, 128]
   dynamics_dropout: [0., 0.]
   state_dependent_std:
     diagonal: True
@@ -36,5 +36,7 @@ policy_kwargs:                                              # Policy parameters 
       vf: [256, 128]
       ex: [256, 128]
   log_std_init: -1.60
+
+controlled_variables: ObjQvelForce # ObjQvelForce ObjQvelForceTable
 
 jax_enable_x64: False

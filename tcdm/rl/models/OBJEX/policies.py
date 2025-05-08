@@ -71,6 +71,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
         pi_and_Q_observations: List = [],
         state_dependent_std: Dict[str, Any] = None,
         use_tanh_bijector: bool = False,
+        switching_mean: bool = False,
         use_expln: bool = False,
         squash_output: bool = False,
         features_extractor_class: Type[BaseFeaturesExtractor] = FlattenExtractor,
@@ -98,6 +99,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
             pi_and_Q_observations=pi_and_Q_observations,
             state_dependent_std=state_dependent_std,
             use_tanh_bijector=use_tanh_bijector,
+            switching_mean=switching_mean,
         )
 
         # Default network architecture, from stable-baselines
@@ -146,7 +148,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
             action_dim = get_action_dim(action_space)
             self.action_dist = DiagGaussianDistribution(action_dim)
         else:
-            self.action_dist = make_proba_distribution(action_space, use_sde=use_sde, dist_kwargs=dist_kwargs)
+            self.action_dist = make_proba_distribution(action_space, use_sde=use_sde, switching_mean=switching_mean, dist_kwargs=dist_kwargs)
         self._build(lr_schedule)
 
     def set_action_bias(self, data):

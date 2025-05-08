@@ -23,7 +23,7 @@ from stable_baselines3.common.distributions import (
 from tcdm.rl.models.OBJEX.distributions import make_proba_distribution, \
                                                    DiagGaussianDistribution
 
-from tcdm.rl.models.OBJEX.distributions import FullGaussianDistribution
+from tcdm.rl.models.OBJEX.distributions import FullGaussianDistribution, SwitchingGaussianDistribution
 from stable_baselines3.common.preprocessing import get_action_dim, is_image_space, maybe_transpose, preprocess_obs
 from stable_baselines3.common.torch_layers import (
     BaseFeaturesExtractor,
@@ -211,12 +211,18 @@ class BasePolicy(BaseModel):
         or not using a ``tanh()`` function.
     """
 
-    def __init__(self, *args, squash_output: bool = False, pi_and_Q_observations: List =[], state_dependent_std: Dict[str, Any], use_tanh_bijector: bool, **kwargs):
+    def __init__(self, *args, squash_output: bool = False,
+                 pi_and_Q_observations: List =[],
+                 state_dependent_std: Dict[str, Any],
+                 use_tanh_bijector: bool,
+                 switching_mean: bool,
+                 **kwargs):
         super(BasePolicy, self).__init__(*args, **kwargs)
         self._squash_output = squash_output
         self._pi_and_Q_observations = pi_and_Q_observations
         self._state_dependent_std = state_dependent_std
         self._use_tanh_bijector = use_tanh_bijector
+        self._switching_mean = switching_mean
 
     @staticmethod
     def _dummy_schedule(progress_remaining: float) -> float:
@@ -243,6 +249,11 @@ class BasePolicy(BaseModel):
     def state_dependent_std(self) -> Dict[str, Any]:
         """(bool) Getter for state_dependent_std."""
         return self._state_dependent_std
+    
+    @property
+    def switching_mean(self) -> bool:
+        """(bool) Getter for switching_mean."""
+        return self._switching_mean
 
     @staticmethod
     def init_weights(module: nn.Module, gain: float = 1) -> None:
@@ -542,6 +553,10 @@ class ActorCriticPolicy(BasePolicy):
             self.action_net, self.log_std = self.action_dist.proba_distribution_net(
                 latent_dim=latent_dim_pi, log_std_init=self.log_std_init
             )
+        elif isinstance(self.action_dist, SwitchingGaussianDistribution):
+            self.action_net, self.log_std = self.action_dist.proba_distribution_net(
+                latent_dim=latent_dim_pi, log_std_init=self.log_std_init
+            )
         elif isinstance(self.action_dist, DiagGaussianDistribution):
             self.action_net, self.log_std = self.action_dist.proba_distribution_net(
                 latent_dim=latent_dim_pi, log_std_init=self.log_std_init
@@ -654,15 +669,23 @@ class ActorCriticPolicy(BasePolicy):
             log_std = self.explore_net(latent_ex)
             zlog_std = self.log_std
 
-        touching_object = obs[:,-1] > 0
-
-        if touching_object.sum() == 0:
-            channel = []
+        if self.switching_mean:
+            touching_table = obs[:,-1] == 1
+            if (~touching_table).sum() == 0:
+                channel = []
+            else:
+                channel = self.get_synergies(th.zeros_like(mean_actions[..., :self.action_dim]), obs, self.dynamics.model)
         else:
-            channel = self.get_synergies(mean_actions, obs, self.dynamics.model)
+            touching_object = obs[:,-1] > 0
+            if touching_object.sum() == 0:
+                channel = []
+            else:
+                channel = self.get_synergies(mean_actions, obs, self.dynamics.model)
 
         if isinstance(self.action_dist, FullGaussianDistribution):
             return self.action_dist.proba_distribution(mean_actions, zlog_std, log_std, channel, touching_object, self.log_std_init), mean_actions, channel
+        elif isinstance(self.action_dist, SwitchingGaussianDistribution):
+            return self.action_dist.proba_distribution(mean_actions, zlog_std, log_std, channel, touching_table, self.log_std_init), mean_actions, channel
         elif isinstance(self.action_dist, DiagGaussianDistribution):
             return self.action_dist.proba_distribution(mean_actions, self.log_std)
         elif isinstance(self.action_dist, CategoricalDistribution):

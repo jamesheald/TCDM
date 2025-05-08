@@ -6,7 +6,7 @@ task_kwargs:                                        # task keywords
     obj_err_scale: 50
     object_reward_scale: 10.0
     lift_bonus_thresh: 0.02
-    lift_bonus_mag: 2.5
+    lift_bonus_mag: 0.
     obj_com_term: 0.25
     n_envs: ${n_envs}
     obj_reward_ramp: 0

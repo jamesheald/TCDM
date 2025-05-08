@@ -13,8 +13,6 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, \
                                              VecVideoRecorder
 
-from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjQvelForce
-
 class InfoCallback(BaseCallback):
     def _on_rollout_end(self) -> None:
         all_keys = {}
@@ -58,19 +56,24 @@ class FallbackCheckpoint(BaseCallback):
         return True
 
 
-def _env_maker(name, task_kwargs, env_kwargs, info_keywords, state_keyword):
+def _env_maker(controlled_variables, name, task_kwargs, env_kwargs, info_keywords, state_keyword):
     np.random.seed()
     domain, task = name.split('-')
     env = suite.load(domain, task, OmegaConf.to_container(task_kwargs), 
                      dict(env_kwargs), gym_wrap=True)
     env = Monitor(env, info_keywords=tuple(info_keywords))
     env = _ObsExtractor(env, state_keyword)
-    env = PGDMObsWrapperObjQvelForce(env, domain)
+    if controlled_variables == 'ObjQvelForce':
+        from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjQvelForce
+        env = PGDMObsWrapperObjQvelForce(env, domain)
+    elif controlled_variables == 'ObjQvelForceTable':
+        from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjQvelForceTable
+        env = PGDMObsWrapperObjQvelForceTable(env, domain)
     return env
 
 
-def make_env(multi_proc, n_envs, vid_freq, vid_length, **kwargs):
-    env_maker = functools.partial(_env_maker, **kwargs)
+def make_env(multi_proc, controlled_variables, n_envs, vid_freq, vid_length, **kwargs):
+    env_maker = functools.partial(_env_maker, controlled_variables, **kwargs)
     if multi_proc:
         env = SubprocVecEnv([env_maker for _ in range(n_envs)])
     else:
