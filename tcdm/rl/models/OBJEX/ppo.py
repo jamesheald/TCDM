@@ -236,77 +236,6 @@ class PPO(OnPolicyAlgorithm):
         Update policy using the currently gathered rollout buffer.
         """
 
-        # dynamics_losses = []
-        # for epoch in range(self.dynamics_n_epochs):
-        #     for rollout_data in self.rollout_buffer.get(self.batch_size):
-
-        #         # only train the dynamics model when touching the object
-        #         if self.switching_mean:
-        #             touching_object = rollout_data.observations[:,-2] > 0
-        #         else:
-        #             touching_object = rollout_data.observations[:,-1] > 0
-
-        #         if sum(touching_object) > 0:
-
-        #             actions = rollout_data.actions
-        #             if isinstance(self.action_space, spaces.Discrete):
-        #                 # Convert discrete action from float to long
-        #                 actions = rollout_data.actions.long().flatten()              
-
-        #             s_prime_mean, s_prime_log_var = self.policy.dynamics.model(rollout_data.observations, th.clamp(actions, -1., 1.))
-                    
-        #             delta_obs = rollout_data.next_observations-rollout_data.observations
-
-        #             # log likelihood loss
-        #             dist = Independent(Normal(loc=s_prime_mean[touching_object], scale=(0.5*s_prime_log_var[touching_object]).exp()), 1)
-        #             log_probs = dist.log_prob(delta_obs[touching_object][:,self.controlled_variables]) # shape: [batch_size]
-        #             dynamics_loss = -log_probs.mean()
-
-        #             # mse loss
-        #             # dynamics_loss = F.mse_loss(s_prime_mean[touching_object], delta_obs[touching_object][:,self.controlled_variables])
-
-        #             # Optimization step
-        #             self.policy.dynamics.optimizer.zero_grad()
-        #             dynamics_loss.backward()
-        #             # Clip grad norm
-        #             th.nn.utils.clip_grad_norm_(self.policy.dynamics.model.parameters(), self.max_grad_norm)
-        #             self.policy.dynamics.optimizer.step()
-
-        #             dynamics_losses.append(dynamics_loss.item())
-
-        dynamics_losses = []
-        for epoch in range(self.dynamics_n_epochs):
-            for rollout_data in self.rollout_buffer.get(self.batch_size):
-
-                actions = rollout_data.actions
-                if isinstance(self.action_space, spaces.Discrete):
-                    # Convert discrete action from float to long
-                    actions = rollout_data.actions.long().flatten()              
-
-                s_prime_mean, s_prime_log_var = self.policy.dynamics.model(rollout_data.observations, th.clamp(actions, -1., 1.))
-                
-                delta_obs = rollout_data.next_observations-rollout_data.observations
-
-                # log likelihood loss
-                dist = Independent(Normal(loc=s_prime_mean, scale=(0.5*s_prime_log_var).exp()), 1)
-                log_probs = dist.log_prob(delta_obs[:,self.controlled_variables]) # shape: [batch_size]
-                dynamics_loss = -log_probs.mean()
-
-                # mse loss
-                # dynamics_loss = F.mse_loss(s_prime_mean[touching_object], delta_obs[touching_object][:,self.controlled_variables])
-
-                # Optimization step
-                self.policy.dynamics.optimizer.zero_grad()
-                dynamics_loss.backward()
-                # Clip grad norm
-                th.nn.utils.clip_grad_norm_(self.policy.dynamics.model.parameters(), self.max_grad_norm)
-                self.policy.dynamics.optimizer.step()
-
-                dynamics_losses.append(dynamics_loss.item())
-
-        if len(dynamics_losses) == 0:
-            dynamics_losses = [0.]
-
         # Update optimizer learning rate
         self._update_learning_rate(self.policy.optimizer)
         # Compute current clip range
@@ -481,6 +410,36 @@ class PPO(OnPolicyAlgorithm):
 
             if not continue_training:
                 break
+
+        dynamics_losses = []
+        for epoch in range(self.dynamics_n_epochs):
+            for rollout_data in self.rollout_buffer.get(self.batch_size):
+
+                actions = rollout_data.actions
+                if isinstance(self.action_space, spaces.Discrete):
+                    # Convert discrete action from float to long
+                    actions = rollout_data.actions.long().flatten()              
+
+                s_prime_mean, s_prime_log_var = self.policy.dynamics.model(rollout_data.observations, th.clamp(actions, -1., 1.))
+                
+                delta_obs = rollout_data.next_observations-rollout_data.observations
+
+                # log likelihood loss
+                dist = Independent(Normal(loc=s_prime_mean, scale=(0.5*s_prime_log_var).exp()), 1)
+                log_probs = dist.log_prob(delta_obs[:,self.controlled_variables]) # shape: [batch_size]
+                dynamics_loss = -log_probs.mean()
+
+                # mse loss
+                # dynamics_loss = F.mse_loss(s_prime_mean[touching_object], delta_obs[touching_object][:,self.controlled_variables])
+
+                # Optimization step
+                self.policy.dynamics.optimizer.zero_grad()
+                dynamics_loss.backward()
+                # Clip grad norm
+                th.nn.utils.clip_grad_norm_(self.policy.dynamics.model.parameters(), self.max_grad_norm)
+                self.policy.dynamics.optimizer.step()
+
+                dynamics_losses.append(dynamics_loss.item())
 
         self._n_updates += self.n_epochs
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
