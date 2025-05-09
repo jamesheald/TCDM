@@ -23,7 +23,7 @@ from stable_baselines3.common.distributions import (
 from tcdm.rl.models.OBJEX.distributions import make_proba_distribution, \
                                                    DiagGaussianDistribution
 
-from tcdm.rl.models.OBJEX.distributions import FullGaussianDistribution, SwitchingGaussianDistribution
+from tcdm.rl.models.OBJEX.distributions import FullGaussianDistribution, SwitchingGaussianDistribution, MixtureGaussianDistribution
 from stable_baselines3.common.preprocessing import get_action_dim, is_image_space, maybe_transpose, preprocess_obs
 from stable_baselines3.common.torch_layers import (
     BaseFeaturesExtractor,
@@ -557,6 +557,10 @@ class ActorCriticPolicy(BasePolicy):
             self.action_net, self.log_std = self.action_dist.proba_distribution_net(
                 latent_dim=latent_dim_pi, log_std_init=self.log_std_init
             )
+        elif isinstance(self.action_dist, MixtureGaussianDistribution):
+            self.action_net, self.log_std = self.action_dist.proba_distribution_net(
+                latent_dim=latent_dim_pi, log_std_init=self.log_std_init
+            )
         elif isinstance(self.action_dist, DiagGaussianDistribution):
             self.action_net, self.log_std = self.action_dist.proba_distribution_net(
                 latent_dim=latent_dim_pi, log_std_init=self.log_std_init
@@ -616,7 +620,7 @@ class ActorCriticPolicy(BasePolicy):
         latent_pi, latent_vf, latent_ex, latent_sde = self._get_latent(obs)
         # Evaluate the values for the given observations
         values = self.value_net(latent_vf)
-        (distribution, _, _, _, _), _, _ = self._get_action_dist_from_latent(latent_pi, latent_ex, obs, latent_sde=latent_sde)
+        (distribution, _, _, _, _, _), _, _ = self._get_action_dist_from_latent(latent_pi, latent_ex, obs, latent_sde=latent_sde)
         actions = distribution.get_actions(deterministic=deterministic)
         log_prob = distribution.log_prob(actions)
         return actions, values, log_prob
@@ -686,6 +690,8 @@ class ActorCriticPolicy(BasePolicy):
             return self.action_dist.proba_distribution(mean_actions, zlog_std, log_std, channel, touching_object, self.log_std_init), mean_actions, channel
         elif isinstance(self.action_dist, SwitchingGaussianDistribution):
             return self.action_dist.proba_distribution(mean_actions, zlog_std, log_std, channel, touching_table, self.log_std_init), mean_actions, channel
+        elif isinstance(self.action_dist, MixtureGaussianDistribution):
+            return self.action_dist.proba_distribution(mean_actions, zlog_std, log_std, channel, touching_table, self.log_std_init), mean_actions, channel
         elif isinstance(self.action_dist, DiagGaussianDistribution):
             return self.action_dist.proba_distribution(mean_actions, self.log_std)
         elif isinstance(self.action_dist, CategoricalDistribution):
@@ -711,7 +717,7 @@ class ActorCriticPolicy(BasePolicy):
         :return: Taken action according to the policy
         """
         latent_pi, _, latent_ex, latent_sde = self._get_latent(observation)
-        (distribution, _, _, _, _), _, _ = self._get_action_dist_from_latent(latent_pi, latent_ex, observation, latent_sde)
+        (distribution, _, _, _, _, _), _, _ = self._get_action_dist_from_latent(latent_pi, latent_ex, observation, latent_sde)
         return distribution.get_actions(deterministic=deterministic)
 
     def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
@@ -725,10 +731,10 @@ class ActorCriticPolicy(BasePolicy):
             and entropy of the action distribution.
         """
         latent_pi, latent_vf, latent_ex, latent_sde = self._get_latent(obs)
-        (distribution, ostd, zstd, diagonal_entropy, explore_entropy), action_mu, channel = self._get_action_dist_from_latent(latent_pi, latent_ex, obs, latent_sde)
+        (distribution, ostd, zstd, diagonal_entropy, explore_entropy, mix_probs), action_mu, channel = self._get_action_dist_from_latent(latent_pi, latent_ex, obs, latent_sde)
         log_prob = distribution.log_prob(actions)
         values = self.value_net(latent_vf)
-        return values, log_prob, distribution.entropy(), diagonal_entropy, explore_entropy, ostd, zstd, action_mu, channel
+        return values, log_prob, distribution.entropy(), diagonal_entropy, explore_entropy, ostd, zstd, action_mu, channel, mix_probs
 
 
 class ActorCriticCnnPolicy(ActorCriticPolicy):

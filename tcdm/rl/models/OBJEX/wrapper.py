@@ -12,6 +12,8 @@ import collections
 import gym
 import mujoco
 
+from myosuite.utils.quat_math import mat2euler
+
 def _spec_to_box(spec):
     """
     Helper function sourced from: https://github.com/denisyarats/dmc2gym
@@ -235,5 +237,64 @@ class PGDMObsWrapperObjQvelForceTable(gym.ObservationWrapper):
                                     total_normal_force[None]/10.,
                                     object_touching_table), 
                                     axis=0).astype(np.float32)
+        
+        return new_obs
+    
+class PGDMObsWrapperTipEx(gym.ObservationWrapper):
+    def __init__(self, env, domain):
+        super().__init__(env)
+
+        self.num_pi_and_Q_observations = self.env.observation_space.shape[0]
+        self.num_controlled_variables = 21
+
+        self.observation_space = gym.spaces.Box(low=-10., high=10.,
+                                                shape=(self.num_pi_and_Q_observations + self.num_controlled_variables,),
+                                                dtype=self.env.observation_space.dtype)
+
+        # indices of observations that will be passed as input to the policy and the Q-function networks
+        self.pi_and_Q_observations = list(range(self.num_pi_and_Q_observations))
+
+        # indices of the controlled variables
+        self.controlled_variables = [self.num_pi_and_Q_observations + i for i in range(self.num_controlled_variables)]
+
+        self.model = self.env.unwrapped._base_env.physics.model
+
+        self.tip_sites = []
+        for i in range(self.model.nsite):
+            name = mujoco.mj_id2name(self.model.ptr, mujoco.mjtObj.mjOBJ_SITE, i)
+            if "adroit/S_grasp" in name:
+                self.palm_id = i
+            elif "adroit/S_" in name and "tip" in name:
+                self.tip_sites.append(i)
+
+    def observation(self, obs):
+
+        palm_pos = self.env.unwrapped._base_env.physics.data.site_xpos[self.palm_sid]
+        palm_ori = np.reshape(self.env.unwrapped._base_env.physics.data.site_xmat[self.palm_sid], (3, 3))
+        palm_ori_euler = mat2euler(palm_ori)
+
+        # palm_ori_inv = np.linalg.inv(palm_ori)
+        palm_ori_inv = palm_ori.T
+
+        # calculate digit tip positions relative to coordinate frame centered on palm
+        tip0 = palm_ori_inv @ (self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites[0]]-palm_pos)
+        tip1 = palm_ori_inv @ (self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites[1]]-palm_pos)
+        tip2 = palm_ori_inv @ (self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites[2]]-palm_pos)
+        tip3 = palm_ori_inv @ (self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites[3]]-palm_pos)
+        tip4 = palm_ori_inv @ (self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites[4]]-palm_pos)
+
+        digit_tips = np.concatenate((tip0,
+                                     tip1,
+                                     tip2,
+                                     tip3,
+                                     tip4), axis=0)
+
+        # controlled variable elements are scaled so that they have the same order of magnitude
+        new_obs = np.concatenate((obs,
+                                  palm_pos,
+                                  palm_ori_euler,
+                                  digit_tips,
+                                  ), 
+                                  axis=0).astype(np.float32)
         
         return new_obs

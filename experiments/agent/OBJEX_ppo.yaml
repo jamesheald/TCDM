@@ -30,6 +30,9 @@ params:
   use_tanh_bijector: False
   diagonal_entropy_when_touching: True
   low_rank_ent_scale: 1
+  off_manifold_std: 
+    state_dependent: False
+    action_dependent: False
 policy_kwargs:                                              # Policy parameters (initial STD and architecture)
   net_arch:
     - pi: [256, 128]
@@ -38,5 +41,7 @@ policy_kwargs:                                              # Policy parameters 
   log_std_init: -1.60
 
 controlled_variables: ObjQvelForce # ObjQvelForce ObjQvelForceTable
+
+mixture_dist: False
 
 jax_enable_x64: False

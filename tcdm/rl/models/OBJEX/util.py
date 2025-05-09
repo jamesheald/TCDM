@@ -69,6 +69,9 @@ def _env_maker(controlled_variables, name, task_kwargs, env_kwargs, info_keyword
     elif controlled_variables == 'ObjQvelForceTable':
         from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjQvelForceTable
         env = PGDMObsWrapperObjQvelForceTable(env, domain)
+    elif controlled_variables == 'TipEx':
+        from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperTipEx
+        env = PGDMObsWrapperTipEx(env, domain)
     return env
 
 
