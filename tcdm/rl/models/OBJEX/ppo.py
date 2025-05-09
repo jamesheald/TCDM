@@ -318,12 +318,6 @@ class PPO(OnPolicyAlgorithm):
         entropy_losses = []
         pg_losses, value_losses = [], []
         clip_fractions = []
-        # guide_losses = []
-
-        diagonal_entropies = []
-        explore_entropies = []
-
-        mix_probs = []
 
         continue_training = True
 
@@ -331,8 +325,6 @@ class PPO(OnPolicyAlgorithm):
         for epoch in range(self.n_epochs):
             approx_kl_divs = []
             # Do a complete pass on the rollout buffer
-            total_sum = 0.0
-            total_count = 0
             CV = []
             ostds = []
             for rollout_data in self.rollout_buffer.get(self.batch_size):
@@ -348,20 +340,10 @@ class PPO(OnPolicyAlgorithm):
                 if self.use_sde:
                     self.policy.reset_noise(self.batch_size)
 
-                values, log_prob, entropy, diagonal_entropy, explore_entropy, ostd, zstd, action_mu, channel, mix_prob = self.policy.evaluate_actions(rollout_data.observations, actions)
-
-                mix_probs.append(th.mean(mix_prob).item())
+                values, log_prob, entropy, ostd = self.policy.evaluate_actions(rollout_data.observations, actions)
 
                 with th.no_grad():
                     ostds.append(ostd.mean().cpu().numpy())
-                
-                non_nan_mask = ~th.isnan(zstd)
-                sum_non_nan = th.sum(zstd[non_nan_mask])
-                count_non_nan = th.sum(non_nan_mask)
-
-                # Accumulate
-                total_sum += sum_non_nan
-                total_count += count_non_nan
                 
                 values = values.flatten()
                 # Normalize advantage
@@ -430,22 +412,7 @@ class PPO(OnPolicyAlgorithm):
                 #     explore_entropy_loss = -self.policy.log_ent_coef.params['explore'].exp().detach() * th.mean(explore_entropy) * self.low_rank_ent_scale
                 #     entropy_loss = diagonal_entropy_loss + explore_entropy_loss
 
-                if self.switching_mean:
-
-                    entropy_loss = -th.mean(self.ent_coef * entropy)
-
-                else:
-
-                    if self.target_entropy['diagonal'] is None:
-                        if self.diagonal_entropy_when_touching:
-                            diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy)
-                        else:
-                            touching_object = rollout_data.observations[:,-1] > 0
-                            diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy[~touching_object])
-                    else:
-                        diagonal_entropy_loss = -self.policy.log_ent_coef.params['diagonal'].exp().detach() * th.mean(diagonal_entropy)
-                    explore_entropy_loss = -self.policy.log_ent_coef.params['explore'].exp().detach() * th.mean(explore_entropy) * self.low_rank_ent_scale
-                    entropy_loss = diagonal_entropy_loss + explore_entropy_loss
+                entropy_loss = -th.mean(self.ent_coef * entropy)
 
                 entropy_losses.append(entropy_loss.item())
 
@@ -518,8 +485,6 @@ class PPO(OnPolicyAlgorithm):
         self._n_updates += self.n_epochs
         explained_var = explained_variance(self.rollout_buffer.values.flatten(), self.rollout_buffer.returns.flatten())
 
-        zstd_mean = total_sum / total_count
-
         # Logs
         # self.logger.record("train/CV0", th.stack(CV).mean(dim=0)[0].cpu().numpy().item())
         # self.logger.record("train/CV1", th.stack(CV).mean(dim=0)[1].cpu().numpy().item())
@@ -528,12 +493,7 @@ class PPO(OnPolicyAlgorithm):
         # self.logger.record("train/CV4", th.stack(CV).mean(dim=0)[4].cpu().numpy().item())
         # self.logger.record("train/CV5", th.stack(CV).mean(dim=0)[5].cpu().numpy().item())
         # self.logger.record("train/CV6", th.stack(CV).mean(dim=0)[6].cpu().numpy().item())
-        self.logger.record("train/prob_full", np.mean(mix_probs))
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
-        self.logger.record("train/diagonal_entropy", np.mean(diagonal_entropies))
-        self.logger.record("train/explore_entropy", np.mean(explore_entropies))
-        self.logger.record("train/ent_coeff_explore", self.policy.log_ent_coef.params['explore'].exp().item())
-        self.logger.record("train/ent_coeff_diagonal", self.policy.log_ent_coef.params['diagonal'].exp().item())
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
         # self.logger.record("train/guide_loss", np.mean(guide_losses))
@@ -545,7 +505,6 @@ class PPO(OnPolicyAlgorithm):
         if hasattr(self.policy, "log_std"):
             # self.logger.record("train/std", th.exp(self.policy.log_std).mean().item())
             self.logger.record("train/std", np.mean(ostds))
-            self.logger.record("train/stdz", zstd_mean.item())
 
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
         self.logger.record("train/clip_range", clip_range)

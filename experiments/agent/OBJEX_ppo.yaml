@@ -12,7 +12,7 @@ params:
   # batch_size: 256                                           # Minibatch size for each ADAM step during PPO opt
   batch_size: 255                                           # Minibatch size for each ADAM step during PPO opt
   n_epochs: 5                                               # Number of epochs on collected global batch per iteration
-  warm_start_mean: True                                     # Warm start mean to explore around initial position
+  warm_start_mean: False                                    # Warm start mean to explore around initial position
   # guide_coef: 1000000
   guide_coef: 0.
   dynamics_learning_rate: 1e-5
@@ -40,7 +40,7 @@ policy_kwargs:                                              # Policy parameters 
       ex: [256, 128]
   log_std_init: -1.60
 
-controlled_variables: ObjQvelForce # ObjQvelForce ObjQvelForceTable
+controlled_variables: TipEx # ObjQvelForce ObjQvelForceTable TipEx
 
 mixture_dist: False
 

@@ -663,12 +663,7 @@ def make_proba_distribution(
 
     if isinstance(action_space, spaces.Box):
         assert len(action_space.shape) == 1, "Error: the action space must be a vector"
-        # cls = StateDependentNoiseDistribution if use_sde else DiagGaussianDistribution
-        if switching_mean:
-            # cls = StateDependentNoiseDistribution if use_sde else SwitchingGaussianDistribution
-            cls = StateDependentNoiseDistribution if use_sde else MixtureGaussianDistribution
-        else:
-            cls = StateDependentNoiseDistribution if use_sde else FullGaussianDistribution
+        cls = StateDependentNoiseDistribution if use_sde else FullGaussianDistribution
         return cls(get_action_dim(action_space), **dist_kwargs)
     elif isinstance(action_space, spaces.Discrete):
         return CategoricalDistribution(action_space.n, **dist_kwargs)
@@ -725,6 +720,7 @@ class FullGaussianDistribution(Distribution):
         self.use_tanh_bijector = kwargs['use_tanh_bijector']
         self.epsilon = epsilon # Avoid NaN (prevents division by zero or log of zero)
         self.gaussian_actions = None
+        self.controlled_variables_dim = 21
 
     def proba_distribution_net(self, latent_dim: int, log_std_init: float = 0.0) -> Tuple[nn.Module, nn.Parameter]:
         """
@@ -736,20 +732,13 @@ class FullGaussianDistribution(Distribution):
         :param log_std_init: Initial value for the log standard deviation
         :return:
         """
-        mean_actions = nn.Linear(latent_dim, self.action_dim)
+        mean_actions = nn.Linear(latent_dim, self.controlled_variables_dim)
 
-        if self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']==False:
-            log_std = nn.Parameter(th.ones(self.action_dim + 7) * log_std_init, requires_grad=True)
-        elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
-            log_std = nn.Parameter(th.ones(self.action_dim) * log_std_init, requires_grad=True)
-        elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
-            log_std = nn.Parameter(th.ones(7) * log_std_init, requires_grad=True)
-        else:
-            log_std = []
+        log_std = nn.Parameter(th.ones(self.controlled_variables_dim) * log_std_init, requires_grad=True)
 
         return mean_actions, log_std
 
-    def proba_distribution(self, mean_actions: th.Tensor, zlogstd: th.Tensor, log_std: th.Tensor, channel: th.Tensor, touching_object: th.Tensor, log_std_init: float = 0.0) -> "FullGaussianDistribution":
+    def proba_distribution(self, mean_actions: th.Tensor, log_std: th.Tensor, channel: th.Tensor) -> "FullGaussianDistribution":
         """
         Create the distribution given its parameters (mean, std)
 
@@ -758,39 +747,17 @@ class FullGaussianDistribution(Distribution):
         :param channel:
         :return:
         """
-        if self.state_dependent_std['diagonal']:
-            action_std = (log_std+log_std_init).exp()
-        else:
-            action_std = th.ones_like(mean_actions) * (log_std).exp()
+        action_std = th.ones_like(mean_actions) * (log_std).exp()
 
-        if self.state_dependent_std['low_rank']:
-            explore_std = (zlogstd+log_std_init).exp()
-        else:
-            explore_std = (zlogstd[None,:].repeat(channel.shape[0],1)).exp()
+        intermediate = th.bmm(channel, th.diag_embed(action_std**2))
+        low_rank = th.bmm(intermediate, channel.transpose(1, 2))
+        covariance_matrix = low_rank + th.diag_embed(th.ones_like(low_rank[:,:,0]) * 1e-6)
 
-        diagonal = th.diag_embed(action_std**2)
-        covariance_matrix = diagonal
+        loc = th.bmm(channel, mean_actions.unsqueeze(-1)).squeeze(-1)
 
-        diagonal_dist = Independent(Normal(loc=mean_actions, scale=action_std), 1)
-        diagonal_entropy = diagonal_dist.entropy()
-        if touching_object.sum() == 0:
-            explore_entropy = th.tensor(0.0, device=zlogstd.device)
-        else:
-            explore_dist = Independent(Normal(loc=th.zeros_like(zlogstd[touching_object]), scale=explore_std[touching_object]), 1)
-            explore_entropy = explore_dist.entropy()
-        
-            intermediate = th.bmm(channel, th.diag_embed(explore_std**2))
-            low_rank = th.bmm(intermediate, channel.transpose(1, 2))
+        self.distribution = MultivariateNormal(loc=loc, covariance_matrix=covariance_matrix)
 
-            # only add low rank component when touching object
-            covariance_matrix[touching_object] += low_rank[touching_object]
-
-        self.distribution = MultivariateNormal(loc=mean_actions, covariance_matrix=covariance_matrix)
-
-        if self.state_dependent_std['low_rank']:
-            return self, action_std, th.where(touching_object[:,None].expand_as(explore_std), explore_std, th.full(explore_std.shape, float('nan'), device=zlogstd.device, dtype=explore_std.dtype)), diagonal_entropy, explore_entropy, th.tensor(0.0)
-        else:
-            return self, action_std, explore_std, diagonal_entropy, explore_entropy, th.tensor(0.0)
+        return self, action_std
             
     # def log_prob(self, actions: th.Tensor) -> th.Tensor:
         # """
@@ -812,27 +779,11 @@ class FullGaussianDistribution(Distribution):
         :param actions:
         :return:
         """
-        if self.use_tanh_bijector:
-            if gaussian_actions is None:
-                # It will be clipped to avoid NaN when inversing tanh
-                gaussian_actions = TanhBijector.inverse(actions)
-
-            # Log likelihood for a Gaussian distribution
-            log_prob = self.distribution.log_prob(gaussian_actions)
-            # Squash correction (from original SAC implementation)
-            # this comes from the fact that tanh is bijective and differentiable
-            log_prob -= th.sum(th.log(1 - actions ** 2 + self.epsilon), dim=1)
-            return log_prob
-        else:
-            log_prob = self.distribution.log_prob(actions)
-            return log_prob
+        log_prob = self.distribution.log_prob(actions)
+        return log_prob
 
     def entropy(self) -> th.Tensor:
-        # return sum_independent_dims(self.distribution.entropy())
-        if self.use_tanh_bijector:
-            return None
-        else:
-            return self.distribution.entropy()
+        return self.distribution.entropy()
 
     # def sample(self) -> th.Tensor:
     #     # Reparametrization trick to pass gradients
@@ -842,20 +793,10 @@ class FullGaussianDistribution(Distribution):
     #     return self.distribution.mean
 
     def sample(self) -> th.Tensor:
-        if self.use_tanh_bijector:
-            # Reparametrization trick to pass gradients
-            self.gaussian_actions = self.distribution.rsample()
-            return th.tanh(self.gaussian_actions)
-        else:
-            return self.distribution.rsample()
+        return self.distribution.rsample()
 
     def mode(self) -> th.Tensor:
-        if self.use_tanh_bijector:
-            self.gaussian_actions = self.distribution.mean
-            # Squash the output
-            return th.tanh(self.gaussian_actions)
-        else:
-            return self.distribution.mean
+        return self.distribution.mean
 
     def actions_from_params(self, mean_actions: th.Tensor, log_std: th.Tensor, synergies: th.Tensor, deterministic: bool = False) -> th.Tensor:
         # Update the proba distribution

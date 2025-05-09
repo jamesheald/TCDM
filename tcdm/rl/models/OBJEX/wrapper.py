@@ -12,8 +12,6 @@ import collections
 import gym
 import mujoco
 
-from myosuite.utils.quat_math import mat2euler
-
 def _spec_to_box(spec):
     """
     Helper function sourced from: https://github.com/denisyarats/dmc2gym
@@ -263,15 +261,36 @@ class PGDMObsWrapperTipEx(gym.ObservationWrapper):
         for i in range(self.model.nsite):
             name = mujoco.mj_id2name(self.model.ptr, mujoco.mjtObj.mjOBJ_SITE, i)
             if "adroit/S_grasp" in name:
-                self.palm_id = i
+                self.palm_sid = i
             elif "adroit/S_" in name and "tip" in name:
                 self.tip_sites.append(i)
+
+    def mat2euler(self, mat):
+        _FLOAT_EPS = np.finfo(np.float64).eps
+        _EPS4 = _FLOAT_EPS * 4.0
+        """ Convert Rotation Matrix to Euler Angles """
+        mat = np.asarray(mat, dtype=np.float64)
+        assert mat.shape[-2:] == (3, 3), "Invalid shape matrix {}".format(mat)
+
+        cy = np.sqrt(mat[..., 2, 2] * mat[..., 2, 2] + mat[..., 1, 2] * mat[..., 1, 2])
+        condition = cy > _EPS4
+        euler = np.empty(mat.shape[:-1], dtype=np.float64)
+        euler[..., 2] = np.where(condition,
+                                -np.arctan2(mat[..., 0, 1], mat[..., 0, 0]),
+                                -np.arctan2(-mat[..., 1, 0], mat[..., 1, 1]))
+        euler[..., 1] = np.where(condition,
+                                -np.arctan2(-mat[..., 0, 2], cy),
+                                -np.arctan2(-mat[..., 0, 2], cy))
+        euler[..., 0] = np.where(condition,
+                                -np.arctan2(mat[..., 1, 2], mat[..., 2, 2]),
+                                0.0)
+        return euler
 
     def observation(self, obs):
 
         palm_pos = self.env.unwrapped._base_env.physics.data.site_xpos[self.palm_sid]
         palm_ori = np.reshape(self.env.unwrapped._base_env.physics.data.site_xmat[self.palm_sid], (3, 3))
-        palm_ori_euler = mat2euler(palm_ori)
+        palm_ori_euler = self.mat2euler(palm_ori)
 
         # palm_ori_inv = np.linalg.inv(palm_ori)
         palm_ori_inv = palm_ori.T

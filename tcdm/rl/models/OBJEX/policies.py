@@ -152,7 +152,6 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
         self._build(lr_schedule)
 
     def set_action_bias(self, data):
-        # bias = self.action_net.bias.data
         bias = self.action_net.bias.data[:self.action_dim]
         data = data.type(bias.dtype).to(bias.device)
         bias.copy_(data)

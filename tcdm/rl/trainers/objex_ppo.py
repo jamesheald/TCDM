@@ -28,8 +28,6 @@ def objex_ppo_trainer(config, resume_model=None):
     multi_proc = bool(config.agent.multi_proc)
     env = make_env(multi_proc=multi_proc, controlled_variables=config.agent.controlled_variables, **config.env)
 
-    breakpoint()
-
     # import mujoco
     # object_geom_name_to_id = {}
     # adroit_geom_name_to_id = {}
