@@ -26,9 +26,7 @@ def objex_ppo_trainer(config, resume_model=None):
     restore_freq = int(config.restore_checkpoint_freq // config.n_envs)
     n_steps = int(config.agent.params.n_steps // config.n_envs)
     multi_proc = bool(config.agent.multi_proc)
-    env = make_env(multi_proc=multi_proc, controlled_variables=config.agent.controlled_variables, **config.env)
-
-    breakpoint()
+    env = make_env(multi_proc=multi_proc, controlled_variables=config.agent.dist_type, **config.env)
 
     # import mujoco
     # object_geom_name_to_id = {}
@@ -92,7 +90,7 @@ def objex_ppo_trainer(config, resume_model=None):
         policy_kwargs['pi_and_Q_observations']=env.get_attr('pi_and_Q_observations')[0]
         policy_kwargs['state_dependent_std']=config.agent.params.state_dependent_std
         policy_kwargs['use_tanh_bijector']=config.agent.params.use_tanh_bijector
-        policy_kwargs['switching_mean']=True if config.agent.mixture_dist else False
+        policy_kwargs['dist_type']=config.agent.dist_type
         model = OBJEX_PPO(
                         ActorCriticPolicy, 
                         env, verbose=1, 
@@ -128,7 +126,7 @@ def objex_ppo_trainer(config, resume_model=None):
         reset_num_timesteps = True
     
     # initialize callbacks and train
-    eval_env = make_eval_env(multi_proc, config.agent.controlled_variables, config.n_eval_envs, **config.env)
+    eval_env = make_eval_env(multi_proc, config.agent.dist_type, config.n_eval_envs, **config.env)
     eval_callback = EvalCallback(eval_freq, eval_env)
     restore_callback = FallbackCheckpoint(restore_freq)
     log_info = InfoCallback()

@@ -215,14 +215,14 @@ class BasePolicy(BaseModel):
                  pi_and_Q_observations: List =[],
                  state_dependent_std: Dict[str, Any],
                  use_tanh_bijector: bool,
-                 switching_mean: bool,
+                 dist_type: str,
                  **kwargs):
         super(BasePolicy, self).__init__(*args, **kwargs)
         self._squash_output = squash_output
         self._pi_and_Q_observations = pi_and_Q_observations
         self._state_dependent_std = state_dependent_std
         self._use_tanh_bijector = use_tanh_bijector
-        self._switching_mean = switching_mean
+        self._dist_type = dist_type
 
     @staticmethod
     def _dummy_schedule(progress_remaining: float) -> float:
@@ -251,9 +251,9 @@ class BasePolicy(BaseModel):
         return self._state_dependent_std
     
     @property
-    def switching_mean(self) -> bool:
-        """(bool) Getter for switching_mean."""
-        return self._switching_mean
+    def dist_type(self) -> bool:
+        """(bool) Getter for dist_type."""
+        return self._dist_type
 
     @staticmethod
     def init_weights(module: nn.Module, gain: float = 1) -> None:
@@ -673,25 +673,27 @@ class ActorCriticPolicy(BasePolicy):
             log_std = self.explore_net(latent_ex)
             zlog_std = self.log_std
 
-        if self.switching_mean:
+        if self.dist_type == 'switching':
             touching_table = obs[:,-1] == 1
             if (~touching_table).sum() == 0:
                 channel = []
             else:
                 channel = self.get_synergies(th.zeros_like(mean_actions[..., :self.action_dim]), obs, self.dynamics.model)
-        else:
+        elif self.dist_type == 'normal':
             touching_object = obs[:,-1] > 0
             if touching_object.sum() == 0:
                 channel = []
             else:
                 channel = self.get_synergies(mean_actions, obs, self.dynamics.model)
+        elif self.dist_type == 'mixture':
+            channel = self.get_synergies(th.zeros_like(mean_actions[..., :self.action_dim]), obs, self.dynamics.model)
 
         if isinstance(self.action_dist, FullGaussianDistribution):
             return self.action_dist.proba_distribution(mean_actions, zlog_std, log_std, channel, touching_object, self.log_std_init), mean_actions, channel
         elif isinstance(self.action_dist, SwitchingGaussianDistribution):
             return self.action_dist.proba_distribution(mean_actions, zlog_std, log_std, channel, touching_table, self.log_std_init), mean_actions, channel
         elif isinstance(self.action_dist, MixtureGaussianDistribution):
-            return self.action_dist.proba_distribution(mean_actions, zlog_std, log_std, channel, touching_table, self.log_std_init), mean_actions, channel
+            return self.action_dist.proba_distribution(mean_actions, zlog_std, log_std, channel, self.log_std_init), mean_actions, channel
         elif isinstance(self.action_dist, DiagGaussianDistribution):
             return self.action_dist.proba_distribution(mean_actions, self.log_std)
         elif isinstance(self.action_dist, CategoricalDistribution):

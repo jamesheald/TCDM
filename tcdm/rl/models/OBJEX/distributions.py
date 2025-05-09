@@ -647,7 +647,7 @@ class TanhBijector(object):
 
 
 def make_proba_distribution(
-    action_space: gym.spaces.Space, use_sde: bool = False, switching_mean: bool = False, dist_kwargs: Optional[Dict[str, Any]] = None
+    action_space: gym.spaces.Space, use_sde: bool = False, dist_type: str = None, dist_kwargs: Optional[Dict[str, Any]] = None
 ) -> Distribution:
     """
     Return an instance of Distribution for the correct type of action space
@@ -664,8 +664,9 @@ def make_proba_distribution(
     if isinstance(action_space, spaces.Box):
         assert len(action_space.shape) == 1, "Error: the action space must be a vector"
         # cls = StateDependentNoiseDistribution if use_sde else DiagGaussianDistribution
-        if switching_mean:
-            # cls = StateDependentNoiseDistribution if use_sde else SwitchingGaussianDistribution
+        if dist_type == "switching":
+            cls = StateDependentNoiseDistribution if use_sde else SwitchingGaussianDistribution
+        elif dist_type == "mixture":
             cls = StateDependentNoiseDistribution if use_sde else MixtureGaussianDistribution
         else:
             cls = StateDependentNoiseDistribution if use_sde else FullGaussianDistribution
@@ -1099,7 +1100,7 @@ class MixtureGaussianDistribution(Distribution):
 
         return mean_actions, log_std
 
-    def proba_distribution(self, mean_actions: th.Tensor, zlogstd: th.Tensor, log_std: th.Tensor, channel: th.Tensor, touching_table, log_std_init: float = 0.0) -> "FullGaussianDistribution":
+    def proba_distribution(self, mean_actions: th.Tensor, zlogstd: th.Tensor, log_std: th.Tensor, channel: th.Tensor, log_std_init: float = 0.0) -> "FullGaussianDistribution":
         """
         Create the distribution given its parameters (mean, std)
 
@@ -1136,7 +1137,8 @@ class MixtureGaussianDistribution(Distribution):
         # Mixture weights
         # Create two-component logits by appending a zero for the second component
         logits = mean_actions[..., -1]
-        mix_logits = th.stack([logits+2., th.zeros_like(logits)], dim=1)  # shape [B, 2]
+        # mix_logits = th.stack([logits+2., th.zeros_like(logits)], dim=1)  # shape [B, 2]
+        mix_logits = th.stack([logits, th.zeros_like(logits)], dim=1)  # shape [B, 2]
         mix = Categorical(logits=mix_logits)        # batch of mixtures
 
         # LowRankMultivariateNormal as components

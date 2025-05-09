@@ -188,7 +188,7 @@ class PPO(OnPolicyAlgorithm):
         self.clip_grad_ent_coef = clip_grad_ent_coef
         self.diagonal_entropy_when_touching = diagonal_entropy_when_touching
         self.low_rank_ent_scale = low_rank_ent_scale
-        self.switching_mean = policy_kwargs['switching_mean']
+        self.dist_type = policy_kwargs['dist_type']
 
         self.action_dim = self.env.action_space.shape[0]
 
@@ -303,9 +303,6 @@ class PPO(OnPolicyAlgorithm):
                 self.policy.dynamics.optimizer.step()
 
                 dynamics_losses.append(dynamics_loss.item())
-
-        if len(dynamics_losses) == 0:
-            dynamics_losses = [0.]
 
         # Update optimizer learning rate
         self._update_learning_rate(self.policy.optimizer)
@@ -430,21 +427,18 @@ class PPO(OnPolicyAlgorithm):
                 #     explore_entropy_loss = -self.policy.log_ent_coef.params['explore'].exp().detach() * th.mean(explore_entropy) * self.low_rank_ent_scale
                 #     entropy_loss = diagonal_entropy_loss + explore_entropy_loss
 
-                if self.switching_mean:
+                if self.dist_type == 'switching' or self.dist_type == 'mixture':
 
                     entropy_loss = -th.mean(self.ent_coef * entropy)
 
-                else:
+                elif self.dist_type == 'normal':
 
-                    if self.target_entropy['diagonal'] is None:
-                        if self.diagonal_entropy_when_touching:
-                            diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy)
-                        else:
-                            touching_object = rollout_data.observations[:,-1] > 0
-                            diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy[~touching_object])
+                    if self.diagonal_entropy_when_touching:
+                        diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy)
                     else:
-                        diagonal_entropy_loss = -self.policy.log_ent_coef.params['diagonal'].exp().detach() * th.mean(diagonal_entropy)
-                    explore_entropy_loss = -self.policy.log_ent_coef.params['explore'].exp().detach() * th.mean(explore_entropy) * self.low_rank_ent_scale
+                        touching_object = rollout_data.observations[:,-1] > 0
+                        diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy[~touching_object])
+                    explore_entropy_loss = -self.ent_coef * th.mean(explore_entropy) * self.low_rank_ent_scale
                     entropy_loss = diagonal_entropy_loss + explore_entropy_loss
 
                 entropy_losses.append(entropy_loss.item())
