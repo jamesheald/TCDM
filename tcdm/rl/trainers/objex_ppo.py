@@ -91,6 +91,7 @@ def objex_ppo_trainer(config, resume_model=None):
         policy_kwargs['state_dependent_std']=config.agent.params.state_dependent_std
         policy_kwargs['use_tanh_bijector']=config.agent.params.use_tanh_bijector
         policy_kwargs['switching_mean']=True if config.agent.mixture_dist else False
+        policy_kwargs['controlled_variables_dim']=env.get_attr('num_controlled_variables')[0]
         model = OBJEX_PPO(
                         ActorCriticPolicy, 
                         env, verbose=1, 

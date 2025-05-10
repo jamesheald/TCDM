@@ -20,7 +20,7 @@ params:
   net_arch_dyn: [256, 128]
   dynamics_dropout: [0., 0.]
   state_dependent_std:
-    diagonal: True
+    diagonal: False
     low_rank: True
   target_entropy:
     diagonal: null # -30 or null
@@ -40,7 +40,7 @@ policy_kwargs:                                              # Policy parameters 
       ex: [256, 128]
   log_std_init: -1.60
 
-controlled_variables: TipEx # ObjQvelForce ObjQvelForceTable TipEx
+controlled_variables: TipEx # ObjQvelForce ObjQvelForceTable TipEx TipExMin Pincer
 
 mixture_dist: False
 

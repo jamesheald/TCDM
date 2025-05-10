@@ -317,3 +317,135 @@ class PGDMObsWrapperTipEx(gym.ObservationWrapper):
                                   axis=0).astype(np.float32)
         
         return new_obs
+
+class PGDMObsWrapperTipExMin(gym.ObservationWrapper):
+    def __init__(self, env, domain):
+        super().__init__(env)
+
+        self.num_pi_and_Q_observations = self.env.observation_space.shape[0]
+        self.num_controlled_variables = 15
+
+        self.observation_space = gym.spaces.Box(low=-10., high=10.,
+                                                shape=(self.num_pi_and_Q_observations + self.num_controlled_variables,),
+                                                dtype=self.env.observation_space.dtype)
+
+        # indices of observations that will be passed as input to the policy and the Q-function networks
+        self.pi_and_Q_observations = list(range(self.num_pi_and_Q_observations))
+
+        # indices of the controlled variables
+        self.controlled_variables = [self.num_pi_and_Q_observations + i for i in range(self.num_controlled_variables)]
+
+        self.model = self.env.unwrapped._base_env.physics.model
+
+        self.tip_sites = []
+        for i in range(self.model.nsite):
+            name = mujoco.mj_id2name(self.model.ptr, mujoco.mjtObj.mjOBJ_SITE, i)
+            if "adroit/S_" in name and "tip" in name:
+                self.tip_sites.append(i)
+
+    def observation(self, obs):
+
+        # calculate digit tip positions relative to coordinate frame centered on palm
+        tip0 = self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites[0]]
+        tip1 = self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites[1]]
+        tip2 = self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites[2]]
+        tip3 = self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites[3]]
+        tip4 = self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites[4]]
+
+        digit_tips = np.concatenate((tip0,
+                                     tip1,
+                                     tip2,
+                                     tip3,
+                                     tip4), axis=0)
+
+        # controlled variable elements are scaled so that they have the same order of magnitude
+        new_obs = np.concatenate((obs,
+                                  digit_tips,
+                                  ), 
+                                  axis=0).astype(np.float32)
+        
+        return new_obs
+
+class PGDMObsWrapperPincer(gym.ObservationWrapper):
+    def __init__(self, env, domain):
+        super().__init__(env)
+
+        self.num_pi_and_Q_observations = self.env.observation_space.shape[0]
+        self.num_controlled_variables = 8
+
+        self.observation_space = gym.spaces.Box(low=-10., high=10.,
+                                                shape=(self.num_pi_and_Q_observations + self.num_controlled_variables,),
+                                                dtype=self.env.observation_space.dtype)
+
+        # indices of observations that will be passed as input to the policy and the Q-function networks
+        self.pi_and_Q_observations = list(range(self.num_pi_and_Q_observations))
+
+        # indices of the controlled variables
+        self.controlled_variables = [self.num_pi_and_Q_observations + i for i in range(self.num_controlled_variables)]
+
+        self.model = self.env.unwrapped._base_env.physics.model
+
+        self.tip_sites = {}
+        for i in range(self.model.nsite):
+            name = mujoco.mj_id2name(self.model.ptr, mujoco.mjtObj.mjOBJ_SITE, i)
+            if "adroit/S_grasp" in name:
+                self.palm_sid = i
+            elif "adroit/S_thtip" == name:
+                self.tip_sites['th'] = i
+            elif "adroit/S_fftip" == name:
+                self.tip_sites['ff'] = i
+            elif "adroit/S_mftip" == name:
+                self.tip_sites['mf'] = i
+            elif "adroit/S_rftip" == name:
+                self.tip_sites['rf'] = i
+            elif "adroit/S_lftip" == name:
+                self.tip_sites['lf'] = i
+
+    def mat2euler(self, mat):
+        _FLOAT_EPS = np.finfo(np.float64).eps
+        _EPS4 = _FLOAT_EPS * 4.0
+        """ Convert Rotation Matrix to Euler Angles """
+        mat = np.asarray(mat, dtype=np.float64)
+        assert mat.shape[-2:] == (3, 3), "Invalid shape matrix {}".format(mat)
+
+        cy = np.sqrt(mat[..., 2, 2] * mat[..., 2, 2] + mat[..., 1, 2] * mat[..., 1, 2])
+        condition = cy > _EPS4
+        euler = np.empty(mat.shape[:-1], dtype=np.float64)
+        euler[..., 2] = np.where(condition,
+                                -np.arctan2(mat[..., 0, 1], mat[..., 0, 0]),
+                                -np.arctan2(-mat[..., 1, 0], mat[..., 1, 1]))
+        euler[..., 1] = np.where(condition,
+                                -np.arctan2(-mat[..., 0, 2], cy),
+                                -np.arctan2(-mat[..., 0, 2], cy))
+        euler[..., 0] = np.where(condition,
+                                -np.arctan2(mat[..., 1, 2], mat[..., 2, 2]),
+                                0.0)
+        return euler
+
+    def observation(self, obs):
+
+        palm_pos = self.env.unwrapped._base_env.physics.data.site_xpos[self.palm_sid]
+        palm_ori = np.reshape(self.env.unwrapped._base_env.physics.data.site_xmat[self.palm_sid], (3, 3))
+        palm_ori_euler = self.mat2euler(palm_ori)
+
+        tip0 = self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites['th']]
+        tip1 = self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites['ff']]
+        tip2 = self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites['mf']]
+        tip3 = self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites['rf']]
+        tip4 = self.env.unwrapped._base_env.physics.data.site_xpos[self.tip_sites['lf']]
+
+        pincer_grip = np.linalg.norm(tip0 - tip1, axis=-1)
+        stretch = np.mean([np.linalg.norm(tip2 - palm_pos, axis=-1),
+                           np.linalg.norm(tip3 - palm_pos, axis=-1),
+                           np.linalg.norm(tip4 - palm_pos, axis=-1)])
+
+        # controlled variable elements are scaled so that they have the same order of magnitude
+        new_obs = np.concatenate((obs,
+                                  palm_pos,
+                                  palm_ori_euler,
+                                  pincer_grip[None],
+                                  stretch[None],
+                                  ), 
+                                  axis=0).astype(np.float32)
+        
+        return new_obs

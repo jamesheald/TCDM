@@ -216,6 +216,7 @@ class BasePolicy(BaseModel):
                  state_dependent_std: Dict[str, Any],
                  use_tanh_bijector: bool,
                  switching_mean: bool,
+                 controlled_variables_dim: int,
                  **kwargs):
         super(BasePolicy, self).__init__(*args, **kwargs)
         self._squash_output = squash_output
@@ -223,6 +224,7 @@ class BasePolicy(BaseModel):
         self._state_dependent_std = state_dependent_std
         self._use_tanh_bijector = use_tanh_bijector
         self._switching_mean = switching_mean
+        self._controlled_variables_dim = controlled_variables_dim
 
     @staticmethod
     def _dummy_schedule(progress_remaining: float) -> float:
@@ -249,6 +251,11 @@ class BasePolicy(BaseModel):
     def state_dependent_std(self) -> Dict[str, Any]:
         """(bool) Getter for state_dependent_std."""
         return self._state_dependent_std
+    
+    @property
+    def controlled_variables_dim(self) -> int:
+        """(bool) Getter for controlled_variables_dim."""
+        return self._controlled_variables_dim
     
     @property
     def switching_mean(self) -> bool:
@@ -581,12 +588,8 @@ class ActorCriticPolicy(BasePolicy):
 
         self.value_net = nn.Linear(self.mlp_extractor.latent_dim_vf, 1)
 
-        if self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']:
-            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.action_dim + 7)
-        elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
-            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, 7)
-        elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
-            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.action_dim)
+        if self.state_dependent_std['low_rank']:
+            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.controlled_variables_dim)
 
         # Init weights: use orthogonal initialization
         # with small initial weight for the output
@@ -658,10 +661,13 @@ class ActorCriticPolicy(BasePolicy):
 
         channel = self.get_synergies(th.zeros(mean_actions.shape[0], self.action_dim).to(self.device), obs, self.dynamics.model)
 
-        log_std = self.log_std
+        if self.state_dependent_std['low_rank']:
+            log_std = self.explore_net(latent_ex)
+        else:
+            log_std = self.log_std
 
         if isinstance(self.action_dist, FullGaussianDistribution):
-            return self.action_dist.proba_distribution(mean_actions, log_std, channel)
+            return self.action_dist.proba_distribution(mean_actions, log_std, channel, self.log_std_init)
         elif isinstance(self.action_dist, DiagGaussianDistribution):
             return self.action_dist.proba_distribution(mean_actions, self.log_std)
         elif isinstance(self.action_dist, CategoricalDistribution):

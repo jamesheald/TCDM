@@ -720,7 +720,7 @@ class FullGaussianDistribution(Distribution):
         self.use_tanh_bijector = kwargs['use_tanh_bijector']
         self.epsilon = epsilon # Avoid NaN (prevents division by zero or log of zero)
         self.gaussian_actions = None
-        self.controlled_variables_dim = 21
+        self.controlled_variables_dim = kwargs['controlled_variables_dim']
 
     def proba_distribution_net(self, latent_dim: int, log_std_init: float = 0.0) -> Tuple[nn.Module, nn.Parameter]:
         """
@@ -736,9 +736,14 @@ class FullGaussianDistribution(Distribution):
 
         log_std = nn.Parameter(th.ones(self.controlled_variables_dim) * log_std_init, requires_grad=True)
 
+        if self.state_dependent_std['low_rank']:
+            log_std = []
+        else:
+            log_std = nn.Parameter(th.ones(self.controlled_variables_dim) * log_std_init, requires_grad=True)
+
         return mean_actions, log_std
 
-    def proba_distribution(self, mean_actions: th.Tensor, log_std: th.Tensor, channel: th.Tensor) -> "FullGaussianDistribution":
+    def proba_distribution(self, mean_actions: th.Tensor, log_std: th.Tensor, channel: th.Tensor, log_std_init: float = 0.0) -> "FullGaussianDistribution":
         """
         Create the distribution given its parameters (mean, std)
 
@@ -747,11 +752,14 @@ class FullGaussianDistribution(Distribution):
         :param channel:
         :return:
         """
-        action_std = th.ones_like(mean_actions) * (log_std).exp()
+        if self.state_dependent_std['low_rank']:
+            action_std = (log_std+log_std_init).exp()
+        else:
+            action_std = th.ones_like(mean_actions) * (log_std).exp()
 
         intermediate = th.bmm(channel, th.diag_embed(action_std**2))
         low_rank = th.bmm(intermediate, channel.transpose(1, 2))
-        covariance_matrix = low_rank + th.diag_embed(th.ones_like(low_rank[:,:,0]) * 1e-6)
+        covariance_matrix = low_rank + th.diag_embed(th.ones_like(low_rank[:,:,0]) * 1e-5)
 
         loc = th.bmm(channel, mean_actions.unsqueeze(-1)).squeeze(-1)
 

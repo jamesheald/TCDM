@@ -72,6 +72,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
         state_dependent_std: Dict[str, Any] = None,
         use_tanh_bijector: bool = False,
         switching_mean: bool = False,
+        controlled_variables_dim: int = 21, 
         use_expln: bool = False,
         squash_output: bool = False,
         features_extractor_class: Type[BaseFeaturesExtractor] = FlattenExtractor,
@@ -100,6 +101,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
             state_dependent_std=state_dependent_std,
             use_tanh_bijector=use_tanh_bijector,
             switching_mean=switching_mean,
+            controlled_variables_dim=controlled_variables_dim,
         )
 
         # Default network architecture, from stable-baselines
@@ -132,6 +134,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
             dist_kwargs = {
                 "state_dependent_std": self.state_dependent_std,
                 "use_tanh_bijector": use_tanh_bijector,
+                "controlled_variables_dim": controlled_variables_dim,
             }
 
         self.sde_features_extractor = None
