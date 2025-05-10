@@ -734,12 +734,10 @@ class FullGaussianDistribution(Distribution):
         """
         mean_actions = nn.Linear(latent_dim, self.controlled_variables_dim)
 
-        log_std = nn.Parameter(th.ones(self.controlled_variables_dim) * log_std_init, requires_grad=True)
-
         if self.state_dependent_std['low_rank']:
             log_std = []
         else:
-            log_std = nn.Parameter(th.ones(self.controlled_variables_dim) * log_std_init, requires_grad=True)
+            log_std = nn.Parameter(th.ones(self.action_dim) * log_std_init, requires_grad=True)
 
         return mean_actions, log_std
 
@@ -755,15 +753,11 @@ class FullGaussianDistribution(Distribution):
         if self.state_dependent_std['low_rank']:
             action_std = (log_std+log_std_init).exp()
         else:
-            action_std = th.ones_like(mean_actions) * (log_std).exp()
-
-        intermediate = th.bmm(channel, th.diag_embed(action_std**2))
-        low_rank = th.bmm(intermediate, channel.transpose(1, 2))
-        covariance_matrix = low_rank + th.diag_embed(th.ones_like(low_rank[:,:,0]) * 1e-5)
+            action_std = th.ones(mean_actions.shape[0], self.action_dim).to(mean_actions.device) * (log_std).exp()
 
         loc = th.bmm(channel, mean_actions.unsqueeze(-1)).squeeze(-1)
 
-        self.distribution = MultivariateNormal(loc=loc, covariance_matrix=covariance_matrix)
+        self.distribution = Independent(Normal(loc=loc, scale=action_std), 1)
 
         return self, action_std
             

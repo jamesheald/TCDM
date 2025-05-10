@@ -589,7 +589,7 @@ class ActorCriticPolicy(BasePolicy):
         self.value_net = nn.Linear(self.mlp_extractor.latent_dim_vf, 1)
 
         if self.state_dependent_std['low_rank']:
-            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.controlled_variables_dim)
+            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.action_dim)
 
         # Init weights: use orthogonal initialization
         # with small initial weight for the output
