@@ -216,6 +216,7 @@ class BasePolicy(BaseModel):
                  state_dependent_std: Dict[str, Any],
                  use_tanh_bijector: bool,
                  dist_type: str,
+                 num_controlled_variables: int,
                  **kwargs):
         super(BasePolicy, self).__init__(*args, **kwargs)
         self._squash_output = squash_output
@@ -223,6 +224,7 @@ class BasePolicy(BaseModel):
         self._state_dependent_std = state_dependent_std
         self._use_tanh_bijector = use_tanh_bijector
         self._dist_type = dist_type
+        self._num_controlled_variables = num_controlled_variables
 
     @staticmethod
     def _dummy_schedule(progress_remaining: float) -> float:
@@ -244,6 +246,11 @@ class BasePolicy(BaseModel):
     def use_tanh_bijector(self) -> bool:
         """(bool) Getter for use_tanh_bijector."""
         return self._use_tanh_bijector
+    
+    @property
+    def num_controlled_variables(self) -> bool:
+        """(bool) Getter for num_controlled_variables."""
+        return self._num_controlled_variables
 
     @property
     def state_dependent_std(self) -> Dict[str, Any]:
@@ -582,9 +589,9 @@ class ActorCriticPolicy(BasePolicy):
         self.value_net = nn.Linear(self.mlp_extractor.latent_dim_vf, 1)
 
         if self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']:
-            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.action_dim + 7)
+            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.action_dim + self.num_controlled_variables)
         elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
-            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, 7)
+            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.num_controlled_variables)
         elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
             self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.action_dim)
 

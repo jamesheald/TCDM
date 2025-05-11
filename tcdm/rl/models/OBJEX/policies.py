@@ -71,6 +71,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
         pi_and_Q_observations: List = [],
         state_dependent_std: Dict[str, Any] = None,
         use_tanh_bijector: bool = False,
+        num_controlled_variables: int = 0,
         dist_type: str = None,
         use_expln: bool = False,
         squash_output: bool = False,
@@ -99,6 +100,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
             pi_and_Q_observations=pi_and_Q_observations,
             state_dependent_std=state_dependent_std,
             use_tanh_bijector=use_tanh_bijector,
+            num_controlled_variables=num_controlled_variables,
             dist_type=dist_type,
         )
 
@@ -132,6 +134,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
             dist_kwargs = {
                 "state_dependent_std": self.state_dependent_std,
                 "use_tanh_bijector": use_tanh_bijector,
+                "num_controlled_variables": num_controlled_variables,
             }
 
         self.sde_features_extractor = None

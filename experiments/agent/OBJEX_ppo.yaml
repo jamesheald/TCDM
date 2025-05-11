@@ -42,6 +42,6 @@ policy_kwargs:                                              # Policy parameters 
 
 # controlled_variables: ObjQvelForce # ObjQvelForce ObjQvelForceTable
 
-dist_type: normal # switching mixture normal
+dist_type: normal # switching mixture normal pincer
 
 jax_enable_x64: False

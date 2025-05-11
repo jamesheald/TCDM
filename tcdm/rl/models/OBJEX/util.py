@@ -66,6 +66,9 @@ def _env_maker(controlled_variables, name, task_kwargs, env_kwargs, info_keyword
     if controlled_variables == 'switching':
         from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjQvelForceTable
         env = PGDMObsWrapperObjQvelForceTable(env, domain)
+    elif controlled_variables == 'pincer':
+        from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperPincer
+        env = PGDMObsWrapperPincer(env, domain)
     else:
         from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjQvelForce
         env = PGDMObsWrapperObjQvelForce(env, domain)

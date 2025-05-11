@@ -726,6 +726,7 @@ class FullGaussianDistribution(Distribution):
         self.use_tanh_bijector = kwargs['use_tanh_bijector']
         self.epsilon = epsilon # Avoid NaN (prevents division by zero or log of zero)
         self.gaussian_actions = None
+        self.num_controlled_variables = kwargs['num_controlled_variables']
 
     def proba_distribution_net(self, latent_dim: int, log_std_init: float = 0.0) -> Tuple[nn.Module, nn.Parameter]:
         """
@@ -740,11 +741,11 @@ class FullGaussianDistribution(Distribution):
         mean_actions = nn.Linear(latent_dim, self.action_dim)
 
         if self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']==False:
-            log_std = nn.Parameter(th.ones(self.action_dim + 7) * log_std_init, requires_grad=True)
+            log_std = nn.Parameter(th.ones(self.action_dim + self.num_controlled_variables) * log_std_init, requires_grad=True)
         elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
             log_std = nn.Parameter(th.ones(self.action_dim) * log_std_init, requires_grad=True)
         elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
-            log_std = nn.Parameter(th.ones(7) * log_std_init, requires_grad=True)
+            log_std = nn.Parameter(th.ones(self.num_controlled_variables) * log_std_init, requires_grad=True)
         else:
             log_std = []
 
@@ -906,14 +907,14 @@ class SwitchingGaussianDistribution(Distribution):
         :param log_std_init: Initial value for the log standard deviation
         :return:
         """
-        mean_actions = nn.Linear(latent_dim, self.action_dim + 7)
+        mean_actions = nn.Linear(latent_dim, self.action_dim + self.num_controlled_variables)
 
         if self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']==False:
-            log_std = nn.Parameter(th.ones(self.action_dim + 7) * log_std_init, requires_grad=True)
+            log_std = nn.Parameter(th.ones(self.action_dim + self.num_controlled_variables) * log_std_init, requires_grad=True)
         elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
             log_std = nn.Parameter(th.ones(self.action_dim) * log_std_init, requires_grad=True)
         elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
-            log_std = nn.Parameter(th.ones(7) * log_std_init, requires_grad=True)
+            log_std = nn.Parameter(th.ones(self.num_controlled_variables) * log_std_init, requires_grad=True)
         else:
             log_std = []
 
@@ -1087,14 +1088,14 @@ class MixtureGaussianDistribution(Distribution):
         :param log_std_init: Initial value for the log standard deviation
         :return:
         """
-        mean_actions = nn.Linear(latent_dim, self.action_dim + 7 + 2)
+        mean_actions = nn.Linear(latent_dim, self.action_dim + self.num_controlled_variables + 2)
 
         if self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']==False:
-            log_std = nn.Parameter(th.ones(self.action_dim + 7) * log_std_init, requires_grad=True)
+            log_std = nn.Parameter(th.ones(self.action_dim + self.num_controlled_variables) * log_std_init, requires_grad=True)
         elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
             log_std = nn.Parameter(th.ones(self.action_dim) * log_std_init, requires_grad=True)
         elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
-            log_std = nn.Parameter(th.ones(7) * log_std_init, requires_grad=True)
+            log_std = nn.Parameter(th.ones(self.num_controlled_variables) * log_std_init, requires_grad=True)
         else:
             log_std = []
 
@@ -1118,13 +1119,13 @@ class MixtureGaussianDistribution(Distribution):
             explore_std = (zlogstd+log_std_init).exp()
         else:
             # explore_std = (zlogstd[None,:].repeat(channel.shape[0],1)).exp()
-            explore_std = th.ones_like(mean_actions[..., :7]) * (zlogstd).exp()
+            explore_std = th.ones_like(mean_actions[..., :self.num_controlled_variables]) * (zlogstd).exp()
 
         mean_actions_full = mean_actions[..., :self.action_dim]
         cov_diag_full = action_std**2
-        cov_factor_full = th.zeros(mean_actions.shape[0], self.action_dim, 7, device='cuda')
+        cov_factor_full = th.zeros(mean_actions.shape[0], self.action_dim, self.num_controlled_variables, device='cuda')
 
-        mean_actions_latent = mean_actions[..., self.action_dim:(self.action_dim+7)]
+        mean_actions_latent = mean_actions[..., self.action_dim:(self.action_dim+self.num_controlled_variables)]
         mean_actions_manifold = th.bmm(channel, mean_actions_latent.unsqueeze(-1)).squeeze(-1)
         cov_factor_manifold = th.bmm(channel, th.diag_embed(explore_std))
         cov_diag_manifold = (th.ones_like(action_std) * (mean_actions[..., -2].unsqueeze(-1)-7).exp())**2 # add diagonal std of 1e-3 to handle manifold changes during dynamics updates
