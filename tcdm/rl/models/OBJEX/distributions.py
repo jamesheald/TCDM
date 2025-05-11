@@ -758,14 +758,14 @@ class FullGaussianDistribution(Distribution):
         :param channel:
         :return:
         """
-        def return_std(log_std, desired_init_std: float, min_std: float):
+        def return_std(log_std, desired_init_std: th.Tensor, min_std: float):
             # https://arxiv.org/abs/2006.05990
             std_offset = th.log(th.exp(th.tensor(desired_init_std - min_std)) - 1.0)
             return F.softplus(log_std + std_offset) + min_std
 
         if self.state_dependent_std['diagonal']:
-            # action_std = (log_std+log_std_init).exp()
-            action_std = return_std(log_std, desired_init_std=log_std_init.exp(), min_std=1e-3)
+            action_std = (log_std+log_std_init).exp()
+            # action_std = return_std(log_std, desired_init_std=th.exp(th.tensor(log_std_init)), min_std=1e-3)
         else:
             action_std = th.ones_like(mean_actions) * (log_std).exp()
 
@@ -775,8 +775,8 @@ class FullGaussianDistribution(Distribution):
         if not self.standard_PPO:
 
             if self.state_dependent_std['low_rank']:
-                # explore_std = (zlogstd+log_std_init).exp()
-                explore_std = return_std(zlogstd, desired_init_std=log_std_init.exp(), min_std=1e-3)
+                explore_std = (zlogstd+log_std_init).exp()
+                # explore_std = return_std(zlogstd, desired_init_std=th.exp(th.tensor(log_std_init)), min_std=1e-3)
             else:
                 explore_std = (zlogstd[None,:].repeat(channel.shape[0],1)).exp()
 
@@ -805,7 +805,7 @@ class FullGaussianDistribution(Distribution):
 
             self.distribution = Independent(Normal(loc=mean_actions, scale=action_std), 1)
 
-            return self, action_std, None, None, None
+            return self, action_std, th.zeros(1), th.zeros(1), th.zeros(1)
 
             
     # def log_prob(self, actions: th.Tensor) -> th.Tensor:

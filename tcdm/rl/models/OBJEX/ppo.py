@@ -188,7 +188,6 @@ class PPO(OnPolicyAlgorithm):
         self.clip_grad_ent_coef = clip_grad_ent_coef
         self.diagonal_entropy_when_touching = diagonal_entropy_when_touching
         self.low_rank_ent_scale = low_rank_ent_scale
-        self.dist_type = policy_kwargs['dist_type']
         self.standard_PPO = policy_kwargs['standard_PPO']
 
         self.action_dim = self.env.action_space.shape[0]
@@ -413,8 +412,8 @@ class PPO(OnPolicyAlgorithm):
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/diagonal_entropy", np.mean(diagonal_entropies))
         self.logger.record("train/explore_entropy", np.mean(explore_entropies))
-        self.logger.record("train/ent_coeff_explore", self.policy.log_ent_coef.params['explore'].exp().item())
-        self.logger.record("train/ent_coeff_diagonal", self.policy.log_ent_coef.params['diagonal'].exp().item())
+        # self.logger.record("train/ent_coeff_explore", self.policy.log_ent_coef.params['explore'].exp().item())
+        # self.logger.record("train/ent_coeff_diagonal", self.policy.log_ent_coef.params['diagonal'].exp().item())
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
         self.logger.record("train/dynamics_loss", np.mean(dynamics_losses))

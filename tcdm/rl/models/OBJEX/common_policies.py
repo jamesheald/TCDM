@@ -23,7 +23,7 @@ from stable_baselines3.common.distributions import (
 from tcdm.rl.models.OBJEX.distributions import make_proba_distribution, \
                                                    DiagGaussianDistribution
 
-from tcdm.rl.models.OBJEX.distributions import FullGaussianDistribution, SwitchingGaussianDistribution, MixtureGaussianDistribution
+from tcdm.rl.models.OBJEX.distributions import FullGaussianDistribution
 from stable_baselines3.common.preprocessing import get_action_dim, is_image_space, maybe_transpose, preprocess_obs
 from stable_baselines3.common.torch_layers import (
     BaseFeaturesExtractor,
