@@ -189,6 +189,7 @@ class PPO(OnPolicyAlgorithm):
         self.diagonal_entropy_when_touching = diagonal_entropy_when_touching
         self.low_rank_ent_scale = low_rank_ent_scale
         self.dist_type = policy_kwargs['dist_type']
+        self.standard_PPO = policy_kwargs['standard_PPO']
 
         self.action_dim = self.env.action_space.shape[0]
 
@@ -206,25 +207,27 @@ class PPO(OnPolicyAlgorithm):
 
             self.clip_range_vf = get_schedule_fn(self.clip_range_vf)
 
-        self.policy.dynamics = SimpleNamespace()
+        if not self.standard_PPO:
 
-        self.policy.dynamics.model = Dynamics(action_dim=self.action_dim,
-                                              net_arch_dyn=self.net_arch_dyn,
-                                              dynamics_observations=self.pi_and_Q_observations,
-                                              controlled_variables=self.controlled_variables,
-                                              drop_out_rates=self.dynamics_dropout).to("cuda")
+            self.policy.dynamics = SimpleNamespace()
 
-        self.policy.dynamics.optimizer = th.optim.Adam(self.policy.dynamics.model.parameters(),
-                                                       lr=self.dynamics_learning_rate,
-        )
+            self.policy.dynamics.model = Dynamics(action_dim=self.action_dim,
+                                                net_arch_dyn=self.net_arch_dyn,
+                                                dynamics_observations=self.pi_and_Q_observations,
+                                                controlled_variables=self.controlled_variables,
+                                                drop_out_rates=self.dynamics_dropout).to("cuda")
 
-        self.policy.log_ent_coef = SimpleNamespace()
+            self.policy.dynamics.optimizer = th.optim.Adam(self.policy.dynamics.model.parameters(),
+                                                        lr=self.dynamics_learning_rate,
+            )
 
-        names = ['diagonal', 'explore']
-        ent_coefs = [self.ent_coef] * len(names)
-        self.policy.log_ent_coef = EntropyCoefModule(names, ent_coefs)
+            self.policy.log_ent_coef = SimpleNamespace()
 
-        self.policy.log_ent_coef.optimizer = th.optim.Adam(self.policy.log_ent_coef.parameters(), lr=self.ent_coef_lr)
+            names = ['diagonal', 'explore']
+            ent_coefs = [self.ent_coef] * len(names)
+            self.policy.log_ent_coef = EntropyCoefModule(names, ent_coefs)
+
+            self.policy.log_ent_coef.optimizer = th.optim.Adam(self.policy.log_ent_coef.parameters(), lr=self.ent_coef_lr)
         
         # self.policy.log_ent_coef.param = nn.Parameter(th.ones(1, device='cuda') * np.log(self.ent_coef), requires_grad=True).to("cuda")
         # self.policy.log_ent_coef.optimizer = th.optim.Adam([self.policy.log_ent_coef.param],
@@ -236,73 +239,37 @@ class PPO(OnPolicyAlgorithm):
         Update policy using the currently gathered rollout buffer.
         """
 
-        # dynamics_losses = []
-        # for epoch in range(self.dynamics_n_epochs):
-        #     for rollout_data in self.rollout_buffer.get(self.batch_size):
-
-        #         # only train the dynamics model when touching the object
-        #         if self.switching_mean:
-        #             touching_object = rollout_data.observations[:,-2] > 0
-        #         else:
-        #             touching_object = rollout_data.observations[:,-1] > 0
-
-        #         if sum(touching_object) > 0:
-
-        #             actions = rollout_data.actions
-        #             if isinstance(self.action_space, spaces.Discrete):
-        #                 # Convert discrete action from float to long
-        #                 actions = rollout_data.actions.long().flatten()              
-
-        #             s_prime_mean, s_prime_log_var = self.policy.dynamics.model(rollout_data.observations, th.clamp(actions, -1., 1.))
-                    
-        #             delta_obs = rollout_data.next_observations-rollout_data.observations
-
-        #             # log likelihood loss
-        #             dist = Independent(Normal(loc=s_prime_mean[touching_object], scale=(0.5*s_prime_log_var[touching_object]).exp()), 1)
-        #             log_probs = dist.log_prob(delta_obs[touching_object][:,self.controlled_variables]) # shape: [batch_size]
-        #             dynamics_loss = -log_probs.mean()
-
-        #             # mse loss
-        #             # dynamics_loss = F.mse_loss(s_prime_mean[touching_object], delta_obs[touching_object][:,self.controlled_variables])
-
-        #             # Optimization step
-        #             self.policy.dynamics.optimizer.zero_grad()
-        #             dynamics_loss.backward()
-        #             # Clip grad norm
-        #             th.nn.utils.clip_grad_norm_(self.policy.dynamics.model.parameters(), self.max_grad_norm)
-        #             self.policy.dynamics.optimizer.step()
-
-        #             dynamics_losses.append(dynamics_loss.item())
-
         dynamics_losses = []
-        for epoch in range(self.dynamics_n_epochs):
-            for rollout_data in self.rollout_buffer.get(self.batch_size):
+        if not self.standard_PPO:
 
-                actions = rollout_data.actions
-                if isinstance(self.action_space, spaces.Discrete):
-                    # Convert discrete action from float to long
-                    actions = rollout_data.actions.long().flatten()              
+            for epoch in range(self.dynamics_n_epochs):
+                for rollout_data in self.rollout_buffer.get(self.batch_size):
 
-                s_prime_mean, s_prime_log_var = self.policy.dynamics.model(rollout_data.observations, th.clamp(actions, -1., 1.))
-                
-                delta_obs = rollout_data.next_observations-rollout_data.observations
+                    actions = rollout_data.actions
+                    if isinstance(self.action_space, spaces.Discrete):
+                        # Convert discrete action from float to long
+                        actions = rollout_data.actions.long().flatten()              
 
-                # log likelihood loss
-                dist = Independent(Normal(loc=s_prime_mean, scale=(0.5*s_prime_log_var).exp()), 1)
-                log_probs = dist.log_prob(delta_obs[:,self.controlled_variables]) # shape: [batch_size]
-                dynamics_loss = -log_probs.mean()
+                    s_prime_mean, s_prime_log_var = self.policy.dynamics.model(rollout_data.observations, th.clamp(actions, -1., 1.))
+                    
+                    delta_obs = rollout_data.next_observations-rollout_data.observations
 
-                # mse loss
-                # dynamics_loss = F.mse_loss(s_prime_mean[touching_object], delta_obs[touching_object][:,self.controlled_variables])
+                    # log likelihood loss
+                    dist = Independent(Normal(loc=s_prime_mean, scale=(0.5*s_prime_log_var).exp()), 1)
+                    log_probs = dist.log_prob(delta_obs[:,self.controlled_variables]) # shape: [batch_size]
+                    dynamics_loss = -log_probs.mean()
 
-                # Optimization step
-                self.policy.dynamics.optimizer.zero_grad()
-                dynamics_loss.backward()
-                # Clip grad norm
-                th.nn.utils.clip_grad_norm_(self.policy.dynamics.model.parameters(), self.max_grad_norm)
-                self.policy.dynamics.optimizer.step()
+                    # mse loss
+                    # dynamics_loss = F.mse_loss(s_prime_mean[touching_object], delta_obs[touching_object][:,self.controlled_variables])
 
-                dynamics_losses.append(dynamics_loss.item())
+                    # Optimization step
+                    self.policy.dynamics.optimizer.zero_grad()
+                    dynamics_loss.backward()
+                    # Clip grad norm
+                    th.nn.utils.clip_grad_norm_(self.policy.dynamics.model.parameters(), self.max_grad_norm)
+                    self.policy.dynamics.optimizer.step()
+
+                    dynamics_losses.append(dynamics_loss.item())
 
         # Update optimizer learning rate
         self._update_learning_rate(self.policy.optimizer)
@@ -315,12 +282,9 @@ class PPO(OnPolicyAlgorithm):
         entropy_losses = []
         pg_losses, value_losses = [], []
         clip_fractions = []
-        # guide_losses = []
 
         diagonal_entropies = []
         explore_entropies = []
-
-        mix_probs = []
 
         continue_training = True
 
@@ -330,10 +294,8 @@ class PPO(OnPolicyAlgorithm):
             # Do a complete pass on the rollout buffer
             total_sum = 0.0
             total_count = 0
-            CV = []
             ostds = []
             for rollout_data in self.rollout_buffer.get(self.batch_size):
-                CV.append(abs(rollout_data.observations[...,-7:]).mean(dim=0))
                 actions = rollout_data.actions
                 if isinstance(self.action_space, spaces.Discrete):
                     # Convert discrete action from float to long
@@ -345,9 +307,7 @@ class PPO(OnPolicyAlgorithm):
                 if self.use_sde:
                     self.policy.reset_noise(self.batch_size)
 
-                values, log_prob, entropy, diagonal_entropy, explore_entropy, ostd, zstd, action_mu, channel, mix_prob = self.policy.evaluate_actions(rollout_data.observations, actions)
-
-                mix_probs.append(th.mean(mix_prob).item())
+                values, log_prob, entropy, diagonal_entropy, explore_entropy, ostd, zstd = self.policy.evaluate_actions(rollout_data.observations, actions)
 
                 with th.no_grad():
                     ostds.append(ostd.mean().cpu().numpy())
@@ -373,14 +333,6 @@ class PPO(OnPolicyAlgorithm):
                 policy_loss_2 = advantages * th.clamp(ratio, 1 - clip_range, 1 + clip_range)
                 policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
 
-                # P = th.bmm(channel, channel.transpose(1, 2)) # Shape [batch_size, 30, 30]
-                # centered_x = action_mu - action_mu.detach() # Shape [batch_size, 30]
-                # projected_x = th.bmm(P, centered_x.unsqueeze(-1)).squeeze(-1) + action_mu.detach() # Shape [batch_size, 30]
-                # guide_dist = th.norm(projected_x - action_mu, dim=1)
-                # nonzero_mask = (channel != 0.).any(dim=(1, 2)).float() # shape [B], bool
-                # guide_dist_masked = guide_dist * nonzero_mask
-                # guide_dist = guide_dist_masked.sum() / nonzero_mask.sum()
-
                 # Logging
                 pg_losses.append(policy_loss.item())
                 clip_fraction = th.mean((th.abs(ratio - 1) > clip_range).float()).item()
@@ -399,39 +351,17 @@ class PPO(OnPolicyAlgorithm):
                 value_loss = F.mse_loss(rollout_data.returns, values_pred)
                 value_losses.append(value_loss.item())
 
-                # if self.switching_mean:
-                #     touching_table = rollout_data.observations[:,-1] == 1
-                #     ent_coef = th.where(touching_table, self.ent_coef , self.ent_coef * self.low_rank_ent_scale)
-                #     if entropy is None:
-                #         # Approximate entropy when no analytical form
-                #         entropy_loss = -th.mean(ent_coef * -log_prob)
-                #     else:
-                #         entropy_loss = -th.mean(ent_coef * entropy)
-                # else:
-                #     # Entropy loss favor exploration
-                #     if entropy is None:
-                #         # Approximate entropy when no analytical form
-                #         entropy_loss = self.ent_coef * -th.mean(-log_prob)
-                #     else:
-                #         entropy_loss = self.ent_coef * -th.mean(entropy)
+                if self.standard_PPO:
 
-                # if not self.policy.use_tanh_bijector and not self.switching_mean:
-                #     if self.target_entropy['diagonal'] is None:
-                #         if self.diagonal_entropy_when_touching:
-                #             diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy)
-                #         else:
-                #             touching_object = rollout_data.observations[:,-1] > 0
-                #             diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy[~touching_object])
-                #     else:
-                #         diagonal_entropy_loss = -self.policy.log_ent_coef.params['diagonal'].exp().detach() * th.mean(diagonal_entropy)
-                #     explore_entropy_loss = -self.policy.log_ent_coef.params['explore'].exp().detach() * th.mean(explore_entropy) * self.low_rank_ent_scale
-                #     entropy_loss = diagonal_entropy_loss + explore_entropy_loss
-
-                if self.dist_type == 'switching' or self.dist_type == 'mixture':
+                    # if entropy is None:
+                    #     # Approximate entropy when no analytical form
+                    #     entropy_loss = -th.mean(self.ent_coef * -log_prob)
+                    # else:
+                    #     entropy_loss = -th.mean(self.ent_coef * entropy)
 
                     entropy_loss = -th.mean(self.ent_coef * entropy)
 
-                elif self.dist_type == 'normal':
+                else:
 
                     if self.diagonal_entropy_when_touching:
                         diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy)
@@ -441,13 +371,12 @@ class PPO(OnPolicyAlgorithm):
                     explore_entropy_loss = -self.ent_coef * th.mean(explore_entropy) * self.low_rank_ent_scale
                     entropy_loss = diagonal_entropy_loss + explore_entropy_loss
 
-                entropy_losses.append(entropy_loss.item())
+                    entropy_losses.append(entropy_loss.item())
 
                 loss = (
                     policy_loss
                     + self.vf_coef * value_loss
                     + entropy_loss
-                    # + self.guide_coef * guide_dist
                  )
 
                 # Calculate approximate form of reverse KL Divergence for early stopping
@@ -472,40 +401,6 @@ class PPO(OnPolicyAlgorithm):
                 th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.policy.optimizer.step()
 
-                # if sum(touching_object) > 0:
-
-                #     # self.policy.log_ent_coef.params['diagonal']
-                #     # self.policy.log_ent_coef.params['explore']
-
-                #     if self.target_entropy['diagonal'] is None:
-                #         ent_coef_loss = self.policy.log_ent_coef.params['explore'] * (explore_entropy.detach() - self.target_entropy['explore']).mean()
-                #     else:
-                #         ent_coef_loss = (
-                #             self.policy.log_ent_coef.params['explore'] * (explore_entropy.detach() - self.target_entropy['explore']).mean()
-                #             + self.policy.log_ent_coef.params['diagonal'] * (diagonal_entropy.detach() - self.target_entropy['diagonal']).mean()
-                #             )
-                #     self.policy.log_ent_coef.optimizer.zero_grad()
-                #     ent_coef_loss.backward()
-                #     # Clip grad norm
-                #     if self.clip_grad_ent_coef:
-                #         th.nn.utils.clip_grad_norm_(self.policy.log_ent_coef.parameters(), self.max_grad_norm)
-                #     self.policy.log_ent_coef.optimizer.step()
-
-                    # explore_entropies.append(explore_entropy.detach().cpu().numpy().mean())
-
-                # with th.no_grad():
-                #     _, _, _, _, action_mu_new, _ = self.policy.evaluate_actions(rollout_data.observations, actions)
-                #     P = th.bmm(channel, channel.transpose(1, 2)) # Shape [batch_size, 30, 30]
-                #     centered_x = action_mu_new - action_mu # Shape [batch_size, 30]
-                #     projected_x = th.bmm(P, centered_x.unsqueeze(-1)).squeeze(-1) + action_mu # Shape [batch_size, 30]
-                #     guide_dist = th.norm(projected_x - action_mu_new, dim=1)
-                #     nonzero_mask = (channel != 0.).any(dim=(1, 2)).float() # shape [B], bool
-                #     guide_dist_masked = guide_dist * nonzero_mask
-                #     guide_dist = guide_dist_masked.sum() / nonzero_mask.sum()
-                #     guide_losses.append(guide_dist.item())
-
-            # diagonal_entropies.append(diagonal_entropy.detach().cpu().numpy().mean())
-
             if not continue_training:
                 break
 
@@ -515,14 +410,6 @@ class PPO(OnPolicyAlgorithm):
         zstd_mean = total_sum / total_count
 
         # Logs
-        # self.logger.record("train/CV0", th.stack(CV).mean(dim=0)[0].cpu().numpy().item())
-        # self.logger.record("train/CV1", th.stack(CV).mean(dim=0)[1].cpu().numpy().item())
-        # self.logger.record("train/CV2", th.stack(CV).mean(dim=0)[2].cpu().numpy().item())
-        # self.logger.record("train/CV3", th.stack(CV).mean(dim=0)[3].cpu().numpy().item())
-        # self.logger.record("train/CV4", th.stack(CV).mean(dim=0)[4].cpu().numpy().item())
-        # self.logger.record("train/CV5", th.stack(CV).mean(dim=0)[5].cpu().numpy().item())
-        # self.logger.record("train/CV6", th.stack(CV).mean(dim=0)[6].cpu().numpy().item())
-        self.logger.record("train/prob_full", np.mean(mix_probs))
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/diagonal_entropy", np.mean(diagonal_entropies))
         self.logger.record("train/explore_entropy", np.mean(explore_entropies))
@@ -530,7 +417,6 @@ class PPO(OnPolicyAlgorithm):
         self.logger.record("train/ent_coeff_diagonal", self.policy.log_ent_coef.params['diagonal'].exp().item())
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
-        # self.logger.record("train/guide_loss", np.mean(guide_losses))
         self.logger.record("train/dynamics_loss", np.mean(dynamics_losses))
         self.logger.record("train/approx_kl", np.mean(approx_kl_divs))
         self.logger.record("train/clip_fraction", np.mean(clip_fractions))

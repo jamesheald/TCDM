@@ -72,7 +72,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
         state_dependent_std: Dict[str, Any] = None,
         use_tanh_bijector: bool = False,
         num_controlled_variables: int = 0,
-        dist_type: str = None,
+        standard_PPO: bool = False,
         use_expln: bool = False,
         squash_output: bool = False,
         features_extractor_class: Type[BaseFeaturesExtractor] = FlattenExtractor,
@@ -101,7 +101,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
             state_dependent_std=state_dependent_std,
             use_tanh_bijector=use_tanh_bijector,
             num_controlled_variables=num_controlled_variables,
-            dist_type=dist_type,
+            standard_PPO=standard_PPO,
         )
 
         # Default network architecture, from stable-baselines
@@ -135,6 +135,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
                 "state_dependent_std": self.state_dependent_std,
                 "use_tanh_bijector": use_tanh_bijector,
                 "num_controlled_variables": num_controlled_variables,
+                "standard_PPO": standard_PPO,
             }
 
         self.sde_features_extractor = None
@@ -151,7 +152,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
             action_dim = get_action_dim(action_space)
             self.action_dist = DiagGaussianDistribution(action_dim)
         else:
-            self.action_dist = make_proba_distribution(action_space, use_sde=use_sde, dist_type=dist_type, dist_kwargs=dist_kwargs)
+            self.action_dist = make_proba_distribution(action_space, use_sde=use_sde, dist_kwargs=dist_kwargs)
         self._build(lr_schedule)
 
     def set_action_bias(self, data):
