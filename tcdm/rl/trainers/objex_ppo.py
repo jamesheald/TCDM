@@ -26,7 +26,7 @@ def objex_ppo_trainer(config, resume_model=None):
     restore_freq = int(config.restore_checkpoint_freq // config.n_envs)
     n_steps = int(config.agent.params.n_steps // config.n_envs)
     multi_proc = bool(config.agent.multi_proc)
-    env = make_env(multi_proc=multi_proc, controlled_variables=config.agent.dist_type, **config.env)
+    env = make_env(multi_proc=multi_proc, controlled_variables=config.agent.controlled_variables, **config.env)
 
     # import mujoco
     # object_geom_name_to_id = {}
@@ -127,7 +127,7 @@ def objex_ppo_trainer(config, resume_model=None):
         reset_num_timesteps = True
     
     # initialize callbacks and train
-    eval_env = make_eval_env(multi_proc, config.agent.dist_type, config.n_eval_envs, **config.env)
+    eval_env = make_eval_env(multi_proc, config.agent.controlled_variables, config.n_eval_envs, **config.env)
     eval_callback = EvalCallback(eval_freq, eval_env)
     restore_callback = FallbackCheckpoint(restore_freq)
     log_info = InfoCallback()

@@ -63,7 +63,7 @@ def _env_maker(controlled_variables, name, task_kwargs, env_kwargs, info_keyword
                      dict(env_kwargs), gym_wrap=True)
     env = Monitor(env, info_keywords=tuple(info_keywords))
     env = _ObsExtractor(env, state_keyword)
-    if controlled_variables == 'switching':
+    if controlled_variables == 'ObjQvelForceTable':
         from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjQvelForceTable
         env = PGDMObsWrapperObjQvelForceTable(env, domain)
     elif controlled_variables == 'pincer':

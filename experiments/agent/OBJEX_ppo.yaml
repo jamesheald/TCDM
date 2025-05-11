@@ -40,8 +40,8 @@ policy_kwargs:                                              # Policy parameters 
       ex: [256, 128]
   log_std_init: -1.60
 
-# controlled_variables: ObjQvelForce # ObjQvelForce ObjQvelForceTable
+controlled_variables: ObjQvelForce # ObjQvelForce ObjQvelForceTable pincer
 
-dist_type: normal # switching mixture normal pincer
+dist_type: normal # switching mixture normal
 
 jax_enable_x64: False
