@@ -588,12 +588,12 @@ class ActorCriticPolicy(BasePolicy):
 
         self.value_net = nn.Linear(self.mlp_extractor.latent_dim_vf, 1)
 
-        if self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']:
-            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.action_dim + self.num_controlled_variables)
-        elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
-            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.num_controlled_variables)
-        elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
-            self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.action_dim)
+        # if self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']:
+        #     self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.action_dim + self.num_controlled_variables)
+        # elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
+        #     self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.num_controlled_variables)
+        # elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
+        #     self.explore_net = nn.Linear(self.mlp_extractor.latent_dim_ex, self.action_dim)
 
         # Init weights: use orthogonal initialization
         # with small initial weight for the output
@@ -608,8 +608,8 @@ class ActorCriticPolicy(BasePolicy):
                 self.action_net: 0.01,
                 self.value_net: 1,
             }
-            if self.state_dependent_std['diagonal'] or self.state_dependent_std['low_rank']:
-                module_gains[self.explore_net] = 1
+            # if self.state_dependent_std['diagonal'] or self.state_dependent_std['low_rank']:
+            #     module_gains[self.explore_net] = 1
             for module, gain in module_gains.items():
                 module.apply(partial(self.init_weights, gain=gain))
 
@@ -661,24 +661,39 @@ class ActorCriticPolicy(BasePolicy):
         :param latent_sde: Latent code for the gSDE exploration function
         :return: Action distribution
         """
-        if self.use_tanh_bijector or self.standard_PPO:
-            mean_actions = self.action_net(latent_pi)
-        else:
-            mean_actions = th.tanh(self.action_net(latent_pi))
+        mean_actions_and_log_std = self.action_net(latent_pi)
 
-        if self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']:
-            log_stds = self.explore_net(latent_ex)
-            log_std = log_stds[..., :self.action_dim]
-            zlog_std = log_stds[..., self.action_dim:]
-        elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']==False:
+        if self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']==False:
+            mean_actions = mean_actions_and_log_std
             log_std = self.log_std[..., :self.action_dim]
             zlog_std = self.log_std[..., self.action_dim:]
         elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
+            mean_actions, zlog_std = th.split(mean_actions_and_log_std, [self.action_dim, self.num_controlled_variables], dim=-1)
             log_std = self.log_std
-            zlog_std = self.explore_net(latent_ex)
         elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
-            log_std = self.explore_net(latent_ex)
+            mean_actions, log_std = th.split(mean_actions_and_log_std, [self.action_dim, self.action_dim], dim=-1)
             zlog_std = self.log_std
+        else:
+            mean_actions, log_std, zlog_std = th.split(mean_actions_and_log_std, [self.action_dim, self.action_dim, self.num_controlled_variables], dim=-1)
+
+        if self.use_tanh_bijector or self.standard_PPO:
+            mean_actions = mean_actions
+        else:
+            mean_actions = th.tanh(mean_actions)
+
+        # if self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']:
+        #     log_stds = self.explore_net(latent_ex)
+        #     log_std = log_stds[..., :self.action_dim]
+        #     zlog_std = log_stds[..., self.action_dim:]
+        # elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']==False:
+        #     log_std = self.log_std[..., :self.action_dim]
+        #     zlog_std = self.log_std[..., self.action_dim:]
+        # elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
+        #     log_std = self.log_std
+        #     zlog_std = self.explore_net(latent_ex)
+        # elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
+        #     log_std = self.explore_net(latent_ex)
+        #     zlog_std = self.log_std
 
         # standard_PPO
 

@@ -40,8 +40,10 @@ policy_kwargs:                                              # Policy parameters 
       ex: [256, 128]
   log_std_init: -1.60
 
-controlled_variables: ObjQvelForce # ObjQvelForce ObjQvelForceTable pincer
+controlled_variables: ObjQvelForce # ObjQvelForce ObjQvelForceTable pincer ObjQvel ObjCvelForce
 
 standard_PPO: False
+
+std_network: one_policy_network
 
 jax_enable_x64: False

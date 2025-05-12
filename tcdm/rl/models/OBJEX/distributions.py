@@ -736,18 +736,21 @@ class FullGaussianDistribution(Distribution):
         :param log_std_init: Initial value for the log standard deviation
         :return:
         """
-        mean_actions = nn.Linear(latent_dim, self.action_dim)
 
         if self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']==False:
+            mean_actions = nn.Linear(latent_dim, self.action_dim)
             log_std = nn.Parameter(th.ones(self.action_dim + self.num_controlled_variables) * log_std_init, requires_grad=True)
         elif self.state_dependent_std['diagonal']==False and self.state_dependent_std['low_rank']:
+            mean_actions_and_log_std = nn.Linear(latent_dim, self.action_dim + self.num_controlled_variables)
             log_std = nn.Parameter(th.ones(self.action_dim) * log_std_init, requires_grad=True)
         elif self.state_dependent_std['diagonal'] and self.state_dependent_std['low_rank']==False:
+            mean_actions_and_log_std = nn.Linear(latent_dim, self.action_dim*2)
             log_std = nn.Parameter(th.ones(self.num_controlled_variables) * log_std_init, requires_grad=True)
         else:
+            mean_actions_and_log_std = nn.Linear(latent_dim, self.action_dim*2 + self.num_controlled_variables)
             log_std = []
 
-        return mean_actions, log_std
+        return mean_actions_and_log_std, log_std
 
     def proba_distribution(self, mean_actions: th.Tensor, zlogstd: th.Tensor, log_std: th.Tensor, channel: th.Tensor, touching_object: th.Tensor, log_std_init: float = 0.0) -> "FullGaussianDistribution":
         """

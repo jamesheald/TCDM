@@ -69,9 +69,15 @@ def _env_maker(controlled_variables, name, task_kwargs, env_kwargs, info_keyword
     elif controlled_variables == 'pincer':
         from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperPincer
         env = PGDMObsWrapperPincer(env, domain)
-    else:
+    elif controlled_variables == 'ObjQvel':
+        from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjQvel
+        env = PGDMObsWrapperObjQvel(env, domain)
+    elif controlled_variables == 'ObjQvelForce':
         from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjQvelForce
         env = PGDMObsWrapperObjQvelForce(env, domain)
+    elif controlled_variables == 'ObjCvelForce':
+        from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjCvelForce
+        env = PGDMObsWrapperObjCvelForce(env, domain)
     return env
 
 
