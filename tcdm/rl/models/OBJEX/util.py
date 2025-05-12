@@ -72,6 +72,9 @@ def _env_maker(controlled_variables, name, task_kwargs, env_kwargs, info_keyword
     elif controlled_variables == 'ObjQvel':
         from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjQvel
         env = PGDMObsWrapperObjQvel(env, domain)
+    elif controlled_variables == 'ObjCvel':
+        from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjCvel
+        env = PGDMObsWrapperObjCvel(env, domain)
     elif controlled_variables == 'ObjQvelForce':
         from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjQvelForce
         env = PGDMObsWrapperObjQvelForce(env, domain)
@@ -79,7 +82,6 @@ def _env_maker(controlled_variables, name, task_kwargs, env_kwargs, info_keyword
         from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjCvelForce
         env = PGDMObsWrapperObjCvelForce(env, domain)
     return env
-
 
 def make_env(multi_proc, controlled_variables, n_envs, vid_freq, vid_length, **kwargs):
     env_maker = functools.partial(_env_maker, controlled_variables, **kwargs)
