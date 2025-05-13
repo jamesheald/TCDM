@@ -56,7 +56,7 @@ class FallbackCheckpoint(BaseCallback):
         return True
 
 
-def _env_maker(controlled_variables, name, task_kwargs, env_kwargs, info_keywords, state_keyword):
+def _env_maker(controlled_variables, repeat, name, task_kwargs, env_kwargs, info_keywords, state_keyword):
     np.random.seed()
     domain, task = name.split('-')
     env = suite.load(domain, task, OmegaConf.to_container(task_kwargs), 
@@ -81,10 +81,14 @@ def _env_maker(controlled_variables, name, task_kwargs, env_kwargs, info_keyword
     elif controlled_variables == 'ObjCvelForce':
         from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjCvelForce
         env = PGDMObsWrapperObjCvelForce(env, domain)
+    # from tcdm.rl.models.OBJEX.wrapper import ActionRepeatWrapper
+    # env = ActionRepeatWrapper(env, repeat=repeat)
     return env
 
 def make_env(multi_proc, controlled_variables, n_envs, vid_freq, vid_length, **kwargs):
-    env_maker = functools.partial(_env_maker, controlled_variables, **kwargs)
+    repeat = 10
+    # print("REPEAT REPEAT REPEAT REPEAT REPEAT REPEAT REPEAT REPEAT REPEAT:",repeat)
+    env_maker = functools.partial(_env_maker, controlled_variables, repeat, **kwargs)
     if multi_proc:
         env = SubprocVecEnv([env_maker for _ in range(n_envs)])
     else:

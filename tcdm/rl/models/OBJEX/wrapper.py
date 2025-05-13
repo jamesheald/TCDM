@@ -646,3 +646,25 @@ class PGDMObsWrapperObjCvel(gym.ObservationWrapper):
                                     axis=0).astype(np.float32)
         
         return new_obs
+
+class ActionRepeatWrapper(gym.Wrapper):
+    def __init__(self, env, repeat=4):
+        super().__init__(env)
+        self.repeat = repeat
+
+    def step(self, action):
+        total_reward = 0.0
+        done = False
+        info = {}
+        
+        for _ in range(self.repeat):
+            obs, reward, done, step_info = self.env.step(action)
+            total_reward += reward
+            info.update(step_info)
+            if done:
+                break
+                
+        return obs, total_reward, done, info
+
+    def reset(self, **kwargs):
+        return self.env.reset(**kwargs)

@@ -5,6 +5,7 @@
 
 
 from .ppo import ppo_trainer
+from .ppo_sdv import pposdv_trainer
 from .objex_ppo import objex_ppo_trainer
 # from .ppo_jax import ppo_jax_trainer
 from .sac import sac_trainer
