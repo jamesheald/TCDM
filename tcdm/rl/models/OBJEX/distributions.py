@@ -707,6 +707,7 @@ def kl_divergence(dist_true: Distribution, dist_pred: Distribution) -> th.Tensor
         return th.distributions.kl_divergence(dist_true.distribution, dist_pred.distribution)
     
 from torch.distributions import MultivariateNormal
+import math
 class FullGaussianDistribution(Distribution):
     """
     Gaussian distribution with diagonal covariance matrix, for continuous actions.
@@ -761,6 +762,31 @@ class FullGaussianDistribution(Distribution):
         :param channel:
         :return:
         """
+        def entropy_low_rank_gaussian(A_scaled: th.Tensor, eps: float = 1e-12):
+            """
+            Compute the entropy of x = A z, where z ~ N(0, diag(sigma_z^2))
+            
+            Args:
+                A_scaled: [B, M, N] - batch of transformation matrices
+                eps: small constant for numerical stability
+                
+            Returns:
+                H: [B] - entropy of each batch element
+            """
+            N = A_scaled.shape[-1]
+            
+            # SVD: A_scaled = U S V^T
+            _, S, _ = th.linalg.svd(A_scaled, full_matrices=False)  # S: [B, N]
+            
+            # log det = 2 * sum log singular values
+            log_det = 2 * th.sum(th.log(S + eps), dim=1)  # shape: [B]
+            
+            # Entropy formula: H = 0.5 * log_det + 0.5 * N * log(2πe)
+            const = 0.5 * N * math.log(2 * math.pi * math.e)
+            entropy = 0.5 * log_det + const  # shape: [B]
+            
+            return entropy
+
         def return_std(log_std, desired_init_std: th.Tensor, min_std: float):
             # https://arxiv.org/abs/2006.05990
             std_offset = th.log(th.exp(th.tensor(desired_init_std - min_std)) - 1.0)
@@ -790,14 +816,18 @@ class FullGaussianDistribution(Distribution):
             else:
                 # explore_dist = Independent(Normal(loc=th.zeros_like(zlogstd[touching_object]), scale=explore_std[touching_object]), 1)
             
-                intermediate = th.bmm(channel, th.diag_embed(explore_std**2))
-                low_rank = th.bmm(intermediate, channel.transpose(1, 2))
+                # intermediate = th.bmm(channel, th.diag_embed(explore_std**2))
+                # low_rank = th.bmm(intermediate, channel.transpose(1, 2))
+                intermediate = channel * explore_std.unsqueeze(1)
+                low_rank = th.bmm(intermediate, intermediate.transpose(1, 2))
 
                 # only add low rank component when touching object
                 covariance_matrix[touching_object] += low_rank[touching_object]
 
-                explore_dist = MultivariateNormal(loc=th.zeros_like(zlogstd[touching_object]), covariance_matrix=low_rank[touching_object])
-                explore_entropy = explore_dist.entropy()
+                explore_entropy = entropy_low_rank_gaussian(intermediate[touching_object])
+
+                # explore_dist = MultivariateNormal(loc=th.zeros_like(zlogstd[touching_object]), covariance_matrix=low_rank[touching_object] + 1e-6 * th.eye(self.num_controlled_variables, device=channel.device).unsqueeze(0))
+                # explore_entropy = explore_dist.entropy()
 
             self.distribution = MultivariateNormal(loc=mean_actions, covariance_matrix=covariance_matrix)
 
