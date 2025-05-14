@@ -73,6 +73,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
         use_tanh_bijector: bool = False,
         num_controlled_variables: int = 0,
         standard_PPO: bool = False,
+        use_gram_schmidt: bool = False,
         use_expln: bool = False,
         squash_output: bool = False,
         features_extractor_class: Type[BaseFeaturesExtractor] = FlattenExtractor,
@@ -136,6 +137,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
                 "use_tanh_bijector": use_tanh_bijector,
                 "num_controlled_variables": num_controlled_variables,
                 "standard_PPO": standard_PPO,
+                "use_gram_schmidt": use_gram_schmidt
             }
 
         self.sde_features_extractor = None

@@ -92,6 +92,7 @@ def objex_ppo_trainer(config, resume_model=None):
         policy_kwargs['use_tanh_bijector']=config.agent.params.use_tanh_bijector
         policy_kwargs['standard_PPO']=config.agent.standard_PPO
         policy_kwargs['num_controlled_variables']=env.get_attr('num_controlled_variables')[0]
+        policy_kwargs['use_gram_schmidt']=config.agent.params.use_gram_schmidt
         model = OBJEX_PPO(
                         ActorCriticPolicy, 
                         env, verbose=1, 

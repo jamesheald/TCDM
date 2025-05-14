@@ -726,6 +726,7 @@ class FullGaussianDistribution(Distribution):
         self.gaussian_actions = None
         self.num_controlled_variables = kwargs['num_controlled_variables']
         self.standard_PPO = kwargs['standard_PPO']
+        self.use_gram_schmidt = kwargs['use_gram_schmidt']
 
     def proba_distribution_net(self, latent_dim: int, log_std_init: float = 0.0) -> Tuple[nn.Module, nn.Parameter]:
         """
@@ -774,6 +775,8 @@ class FullGaussianDistribution(Distribution):
                 H: [B] - entropy of each batch element
             """
             N = A_scaled.shape[-1]
+
+            # log det (A_scaled @ A_scaled^T) = sum of the log of the eigenvalues of A_scaled @ A_scaled^T = 2 * sum of the log of the singular nvalues of A_scaled
             
             # SVD: A_scaled = U S V^T
             _, S, _ = th.linalg.svd(A_scaled, full_matrices=False)  # S: [B, N]
@@ -814,7 +817,6 @@ class FullGaussianDistribution(Distribution):
             if touching_object.sum() == 0:
                 explore_entropy = th.tensor(0.0, device=zlogstd.device)
             else:
-                # explore_dist = Independent(Normal(loc=th.zeros_like(zlogstd[touching_object]), scale=explore_std[touching_object]), 1)
             
                 # intermediate = th.bmm(channel, th.diag_embed(explore_std**2))
                 # low_rank = th.bmm(intermediate, channel.transpose(1, 2))
@@ -824,10 +826,16 @@ class FullGaussianDistribution(Distribution):
                 # only add low rank component when touching object
                 covariance_matrix[touching_object] += low_rank[touching_object]
 
-                explore_entropy = entropy_low_rank_gaussian(intermediate[touching_object])
+                if self.use_gram_schmidt:
+
+                    explore_dist = Independent(Normal(loc=th.zeros_like(zlogstd[touching_object]), scale=explore_std[touching_object]), 1)
+                    explore_entropy = explore_dist.entropy()
+
+                else:
+
+                    explore_entropy = entropy_low_rank_gaussian(intermediate[touching_object])
 
                 # explore_dist = MultivariateNormal(loc=th.zeros_like(zlogstd[touching_object]), covariance_matrix=low_rank[touching_object] + 1e-6 * th.eye(self.num_controlled_variables, device=channel.device).unsqueeze(0))
-                # explore_entropy = explore_dist.entropy()
 
             self.distribution = MultivariateNormal(loc=mean_actions, covariance_matrix=covariance_matrix)
 
