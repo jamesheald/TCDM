@@ -29,10 +29,11 @@ params:
   clip_grad_ent_coef: True
   use_tanh_bijector: False
   diagonal_entropy_when_touching: True
-  low_rank_ent_scale: 1
+  explore_ent_coef: 0.001
   off_manifold_std: 
     state_dependent: False
     action_dependent: False
+  use_gram_schmidt: True
 policy_kwargs:                                              # Policy parameters (initial STD and architecture)
   net_arch:
     - pi: [256, 128]
@@ -40,7 +41,7 @@ policy_kwargs:                                              # Policy parameters 
       ex: [256, 128]
   log_std_init: -1.60
 
-controlled_variables: ObjQvelForce # ObjQvelForce ObjQvelForceTable pincer ObjQvel ObjCvelForce
+controlled_variables: ObjCvelForce # ObjQvelForce ObjQvelForceTable pincer ObjQvel ObjCvelForce
 
 standard_PPO: False
 

@@ -788,14 +788,16 @@ class FullGaussianDistribution(Distribution):
             if touching_object.sum() == 0:
                 explore_entropy = th.tensor(0.0, device=zlogstd.device)
             else:
-                explore_dist = Independent(Normal(loc=th.zeros_like(zlogstd[touching_object]), scale=explore_std[touching_object]), 1)
-                explore_entropy = explore_dist.entropy()
+                # explore_dist = Independent(Normal(loc=th.zeros_like(zlogstd[touching_object]), scale=explore_std[touching_object]), 1)
             
                 intermediate = th.bmm(channel, th.diag_embed(explore_std**2))
                 low_rank = th.bmm(intermediate, channel.transpose(1, 2))
 
                 # only add low rank component when touching object
                 covariance_matrix[touching_object] += low_rank[touching_object]
+
+                explore_dist = MultivariateNormal(loc=th.zeros_like(zlogstd[touching_object]), covariance_matrix=low_rank[touching_object])
+                explore_entropy = explore_dist.entropy()
 
             self.distribution = MultivariateNormal(loc=mean_actions, covariance_matrix=covariance_matrix)
 

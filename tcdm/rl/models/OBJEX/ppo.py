@@ -108,8 +108,10 @@ class PPO(OnPolicyAlgorithm):
         target_entropy: Dict[str, Any] = None,
         ent_coef_lr: float = 1e-5,
         clip_grad_ent_coef: bool = True,
+        explore_ent_coef: float = 1e-3,
         diagonal_entropy_when_touching: bool = True,
-        low_rank_ent_scale: float = 1.,
+        single_entropy: bool = True,
+        use_gram_schmidt: bool = False,
         tensorboard_log: Optional[str] = None,
         create_eval_env: bool = False,
         policy_kwargs: Optional[Dict[str, Any]] = None,
@@ -187,8 +189,10 @@ class PPO(OnPolicyAlgorithm):
         self.ent_coef_lr = ent_coef_lr
         self.clip_grad_ent_coef = clip_grad_ent_coef
         self.diagonal_entropy_when_touching = diagonal_entropy_when_touching
-        self.low_rank_ent_scale = low_rank_ent_scale
         self.standard_PPO = policy_kwargs['standard_PPO']
+        self.single_entropy = single_entropy
+        self.explore_ent_coef = explore_ent_coef
+        self.use_gram_schmidt = use_gram_schmidt
 
         self.action_dim = self.env.action_space.shape[0]
 
@@ -350,13 +354,13 @@ class PPO(OnPolicyAlgorithm):
                 value_loss = F.mse_loss(rollout_data.returns, values_pred)
                 value_losses.append(value_loss.item())
 
-                if self.standard_PPO:
+                if self.single_entropy or self.standard_PPO:
 
                     # if entropy is None:
-                    #     # Approximate entropy when no analytical form
-                    #     entropy_loss = -th.mean(self.ent_coef * -log_prob)
-                    # else:
-                    #     entropy_loss = -th.mean(self.ent_coef * entropy)
+                        #     # Approximate entropy when no analytical form
+                        #     entropy_loss = -th.mean(self.ent_coef * -log_prob)
+                        # else:
+                        #     entropy_loss = -th.mean(self.ent_coef * entropy)
 
                     entropy_loss = -th.mean(self.ent_coef * entropy)
 
@@ -367,16 +371,16 @@ class PPO(OnPolicyAlgorithm):
                     else:
                         touching_object = rollout_data.observations[:,-1] > 0
                         diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy[~touching_object])
-                    explore_entropy_loss = -self.ent_coef * th.mean(explore_entropy) * self.low_rank_ent_scale
+                    explore_entropy_loss = -self.explore_ent_coef * th.mean(explore_entropy)
                     entropy_loss = diagonal_entropy_loss + explore_entropy_loss
 
-                    entropy_losses.append(entropy_loss.item())
+                entropy_losses.append(entropy_loss.item())
 
                 loss = (
                     policy_loss
                     + self.vf_coef * value_loss
                     + entropy_loss
-                 )
+                )
 
                 # Calculate approximate form of reverse KL Divergence for early stopping
                 # see issue #417: https://github.com/DLR-RM/stable-baselines3/issues/417

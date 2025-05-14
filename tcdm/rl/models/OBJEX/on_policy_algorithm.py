@@ -309,7 +309,9 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
         callback.on_training_start(locals(), globals())
 
-        self.policy.get_synergies = Synergies(use_gram_schmidt=True, use_tanh_bijector=self.policy.use_tanh_bijector).forward
+        print("self.policy.use_gram_schmidt", self.use_gram_schmidt)
+
+        self.policy.get_synergies = Synergies(use_gram_schmidt=self.use_gram_schmidt, use_tanh_bijector=self.policy.use_tanh_bijector).forward
 
         while self.num_timesteps < total_timesteps:
 
