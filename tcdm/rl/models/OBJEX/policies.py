@@ -73,7 +73,9 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
         use_tanh_bijector: bool = False,
         num_controlled_variables: int = 0,
         standard_PPO: bool = False,
-        use_gram_schmidt: bool = False,
+        diagonal_entropy: str = None,
+        use_gram_schmidt: bool = True,
+        zlog_std_init: float = 0.0,
         use_expln: bool = False,
         squash_output: bool = False,
         features_extractor_class: Type[BaseFeaturesExtractor] = FlattenExtractor,
@@ -103,6 +105,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
             use_tanh_bijector=use_tanh_bijector,
             num_controlled_variables=num_controlled_variables,
             standard_PPO=standard_PPO,
+            diagonal_entropy=diagonal_entropy,
         )
 
         # Default network architecture, from stable-baselines
@@ -122,6 +125,7 @@ class ActorCriticPolicy(policies.ActorCriticPolicy):
 
         self.normalize_images = normalize_images
         self.log_std_init = log_std_init
+        self.zlog_std_init = zlog_std_init
         dist_kwargs = None
         # Keyword arguments for gSDE distribution
         if use_sde:

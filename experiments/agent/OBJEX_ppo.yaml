@@ -16,19 +16,22 @@ params:
   # guide_coef: 1000000
   guide_coef: 0.
   dynamics_learning_rate: 1e-5
-  dynamics_n_epochs: 5
-  net_arch_dyn: [256, 128]
+  dynamics_n_epochs: 40
+  net_arch_dyn: [400, 300]
+  # net_arch_dyn: [256, 256]
   dynamics_dropout: [0., 0.]
   state_dependent_std:
     diagonal: True
     low_rank: True
-  target_entropy:
-    diagonal: null # -30 or null
-    explore: -7
+  target_entropy: -30. # null -30
+  # target_entropy:
+  #   diagonal: null # -30 or null
+  #   explore: -7
   ent_coef_lr: 1e-5
   clip_grad_ent_coef: True
   use_tanh_bijector: False
-  diagonal_entropy_when_touching: True
+  # diagonal_entropy_when_touching: True
+  diagonal_entropy: not_touch_hand # always not_touch_hand touch_table
   explore_ent_coef: 0.001
   off_manifold_std: 
     state_dependent: False
@@ -36,17 +39,21 @@ params:
   use_gram_schmidt: True
 policy_kwargs:                                              # Policy parameters (initial STD and architecture)
   net_arch:
-    - pi: [256, 128]
-      vf: [256, 128]
-      ex: [256, 128]
+    # - pi: [256, 256]
+      # vf: [256, 256]
+      # ex: [256, 256]
+    - pi: [400, 300]
+      vf: [400, 300]
+      ex: [400, 300]
   log_std_init: -1.60
+  zlog_std_init: -1.60 # -1.6, -1.9, -2.3, -2.6, -3, -3.5
 
-controlled_variables: ObjCvelForce # ObjQvelForce ObjQvelForceTable pincer ObjQvel ObjCvelForce
+controlled_variables: ObjCvelForce # ObjQvelForce ObjQvelForceTable pincer ObjQvel ObjCvelForce ObjCvelForceTable
 
 standard_PPO: False
 
 std_network: one_policy_network
 
-single_entropy: False
+single_entropy: True
 
 jax_enable_x64: False

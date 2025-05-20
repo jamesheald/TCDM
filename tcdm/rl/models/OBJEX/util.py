@@ -81,6 +81,9 @@ def _env_maker(controlled_variables, repeat, name, task_kwargs, env_kwargs, info
     elif controlled_variables == 'ObjCvelForce':
         from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjCvelForce
         env = PGDMObsWrapperObjCvelForce(env, domain)
+    elif controlled_variables == 'ObjCvelForceTable':
+        from tcdm.rl.models.OBJEX.wrapper import PGDMObsWrapperObjCvelForceTable
+        env = PGDMObsWrapperObjCvelForceTable(env, domain)
     # from tcdm.rl.models.OBJEX.wrapper import ActionRepeatWrapper
     # env = ActionRepeatWrapper(env, repeat=repeat)
     return env

@@ -213,74 +213,6 @@ class PGDMObsWrapperObjQvelForce(gym.ObservationWrapper):
         
         return new_obs
 
-class PGDMObsWrapperObjCvelForce(gym.ObservationWrapper):
-    def __init__(self, env, domain):
-        super().__init__(env)
-
-        self.num_pi_and_Q_observations = self.env.observation_space.shape[0]
-        self.num_controlled_variables = 6 + 1
-
-        self.observation_space = gym.spaces.Box(low=-10., high=10.,
-                                                shape=(self.num_pi_and_Q_observations + self.num_controlled_variables,),
-                                                dtype=self.env.observation_space.dtype)
-
-        # indices of observations that will be passed as input to the policy and the Q-function networks
-        self.pi_and_Q_observations = list(range(self.num_pi_and_Q_observations))
-
-        # indices of the controlled variables
-        self.controlled_variables = [self.num_pi_and_Q_observations + i for i in range(self.num_controlled_variables)]
-
-        self.model = self.env.unwrapped._base_env.physics.model
-
-        object_geom_name_to_id = {}
-        adroit_geom_name_to_id = {}
-        object_name = domain + "/"
-        for i in range(self.model.ngeom):
-            name = mujoco.mj_id2name(self.model.ptr, mujoco.mjtObj.mjOBJ_GEOM, i)
-            if "adroit/C_th" in name or "adroit/C_ff" in name or "adroit/C_mf" in name or "adroit/C_rf" in name or "adroit/C_lf" in name:
-                adroit_geom_name_to_id[name] = i
-            elif object_name in name:
-                object_geom_name_to_id[name] = i
-
-        self.adroit_geom_ids = set(adroit_geom_name_to_id.values())
-        self.object_geom_ids = set(object_geom_name_to_id.values())
-
-        self.object_body_id = self.env.unwrapped._base_env.physics.model.name2id(domain + '/object', 'body')
-
-    def normal_force(self):
-
-        total_normal_force = 0.
-        for i_con, con in enumerate(self.env.unwrapped._base_env.physics.data.contact):
-            if con.geom1 in self.adroit_geom_ids and con.geom2 in self.object_geom_ids or \
-                con.geom2 in self.adroit_geom_ids and con.geom1 in self.object_geom_ids:
-                total_normal_force += self.single_contact_normal_force(i_con)
-        return np.array(total_normal_force)
-        
-    def single_contact_normal_force(self, i_con):
-
-        self.env.unwrapped._base_env.physics.forward()
-
-        # https://roboti.us/book/programming.html
-        contact_force = np.zeros((6,1))
-        mujoco.mj_contactForce(self.model.ptr, self.env.unwrapped._base_env.physics.data.ptr, i_con, contact_force)
-        normal_force = abs(contact_force[0,0])
-
-        return normal_force
-        
-    def observation(self, obs):
-
-        total_normal_force = self.normal_force()
-
-        # controlled variable elements are scaled so that they have the same order of magnitude
-        new_obs = np.concatenate((obs,
-                                    # self.env.unwrapped._base_env.physics.data.cvel[-6:-3]*10.,
-                                    # self.env.unwrapped._base_env.physics.data.cvel[-3:],
-                                    self.env.unwrapped._base_env.physics.data.cvel[self.object_body_id],
-                                    total_normal_force[None]/10.), 
-                                    axis=0).astype(np.float32)
-        
-        return new_obs
-
 class PGDMObsWrapperObjQvelForceTable(gym.ObservationWrapper):
     def __init__(self, env, domain):
         super().__init__(env)
@@ -508,8 +440,100 @@ class PGDMObsWrapperObjCvelForce(gym.ObservationWrapper):
 
         # controlled variable elements are scaled so that they have the same order of magnitude
         new_obs = np.concatenate((obs,
+                                    # self.env.unwrapped._base_env.physics.data.cvel[-6:-3]*10.,
+                                    # self.env.unwrapped._base_env.physics.data.cvel[-3:],
                                     self.env.unwrapped._base_env.physics.data.cvel[self.object_body_id],
                                     total_normal_force[None]/10.), 
+                                    axis=0).astype(np.float32)
+        
+        return new_obs
+
+class PGDMObsWrapperObjCvelForceTable(gym.ObservationWrapper):
+    def __init__(self, env, domain):
+        super().__init__(env)
+
+        self.num_pi_and_Q_observations = self.env.observation_space.shape[0]
+        self.num_controlled_variables = 6 + 1
+        self.num_added_observations = 1
+
+        self.observation_space = gym.spaces.Box(low=-10., high=10.,
+                                                shape=(self.num_pi_and_Q_observations
+                                                       + self.num_controlled_variables
+                                                       + self.num_added_observations,),
+                                                dtype=self.env.observation_space.dtype)
+
+        # indices of observations that will be passed as input to the policy and the Q-function networks
+        self.pi_and_Q_observations = list(range(self.num_pi_and_Q_observations))
+
+        # indices of the controlled variables
+        self.controlled_variables = [self.num_pi_and_Q_observations + i for i in range(self.num_controlled_variables)]
+
+        self.model = self.env.unwrapped._base_env.physics.model
+
+        object_geom_name_to_id = {}
+        adroit_geom_name_to_id = {}
+        object_name = domain + "/"
+        for i in range(self.model.ngeom):
+            name = mujoco.mj_id2name(self.model.ptr, mujoco.mjtObj.mjOBJ_GEOM, i)
+            if "adroit/C_th" in name or "adroit/C_ff" in name or "adroit/C_mf" in name or "adroit/C_rf" in name or "adroit/C_lf" in name:
+                adroit_geom_name_to_id[name] = i
+            elif object_name in name:
+                object_geom_name_to_id[name] = i
+
+        self.adroit_geom_ids = set(adroit_geom_name_to_id.values())
+        self.object_geom_ids = set(object_geom_name_to_id.values())
+
+        self.object_body_id = self.env.unwrapped._base_env.physics.model.name2id(domain + '/object', 'body')
+
+        table_body_name_to_id = {}
+        for i in range(self.model.nbody):
+            name = mujoco.mj_id2name(self.model.ptr, mujoco.mjtObj.mjOBJ_BODY, i)
+            if "table" in name:
+                table_body_name_to_id[name] = i
+
+        self.table_body_ids = set(table_body_name_to_id.values())
+
+    def object_touching_table(self):
+
+        for i_con, con in enumerate(self.env.unwrapped._base_env.physics.data.contact):
+            if self.model.ptr.geom(con.geom1).bodyid[0] in self.table_body_ids and con.geom2 in self.object_geom_ids or \
+                self.model.ptr.geom(con.geom2).bodyid[0] in self.table_body_ids and con.geom1 in self.object_geom_ids:
+                return np.ones(1)
+        return np.zeros(1)
+
+    def normal_force(self):
+
+        total_normal_force = 0.
+        for i_con, con in enumerate(self.env.unwrapped._base_env.physics.data.contact):
+            if con.geom1 in self.adroit_geom_ids and con.geom2 in self.object_geom_ids or \
+                con.geom2 in self.adroit_geom_ids and con.geom1 in self.object_geom_ids:
+                total_normal_force += self.single_contact_normal_force(i_con)
+        return np.array(total_normal_force)
+        
+    def single_contact_normal_force(self, i_con):
+
+        self.env.unwrapped._base_env.physics.forward()
+
+        # https://roboti.us/book/programming.html
+        contact_force = np.zeros((6,1))
+        mujoco.mj_contactForce(self.model.ptr, self.env.unwrapped._base_env.physics.data.ptr, i_con, contact_force)
+        normal_force = abs(contact_force[0,0])
+
+        return normal_force
+        
+    def observation(self, obs):
+
+        total_normal_force = self.normal_force()
+
+        object_touching_table = self.object_touching_table()
+
+        # controlled variable elements are scaled so that they have the same order of magnitude
+        new_obs = np.concatenate((obs,
+                                    # self.env.unwrapped._base_env.physics.data.cvel[-6:-3]*10.,
+                                    # self.env.unwrapped._base_env.physics.data.cvel[-3:],
+                                    self.env.unwrapped._base_env.physics.data.cvel[self.object_body_id],
+                                    total_normal_force[None]/10.,
+                                    object_touching_table), 
                                     axis=0).astype(np.float32)
         
         return new_obs

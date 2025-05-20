@@ -105,13 +105,14 @@ class PPO(OnPolicyAlgorithm):
         controlled_variables: List = [],
         dynamics_dropout: List = [],
         dynamics_n_epochs: int = 40,
-        target_entropy: Dict[str, Any] = None,
+        # target_entropy: Dict[str, Any] = None,
+        target_entropy: float = None,
         ent_coef_lr: float = 1e-5,
         clip_grad_ent_coef: bool = True,
         explore_ent_coef: float = 1e-3,
-        diagonal_entropy_when_touching: bool = True,
-        single_entropy: bool = True,
-        use_gram_schmidt: bool = False,
+        diagonal_entropy: str = 'touch_table',
+        single_entropy: bool = False,
+        use_gram_schmidt: bool = True,
         tensorboard_log: Optional[str] = None,
         create_eval_env: bool = False,
         policy_kwargs: Optional[Dict[str, Any]] = None,
@@ -188,7 +189,7 @@ class PPO(OnPolicyAlgorithm):
         self.target_entropy = target_entropy
         self.ent_coef_lr = ent_coef_lr
         self.clip_grad_ent_coef = clip_grad_ent_coef
-        self.diagonal_entropy_when_touching = diagonal_entropy_when_touching
+        self.diagonal_entropy = diagonal_entropy
         self.standard_PPO = policy_kwargs['standard_PPO']
         self.single_entropy = single_entropy
         self.explore_ent_coef = explore_ent_coef
@@ -224,18 +225,18 @@ class PPO(OnPolicyAlgorithm):
                                                         lr=self.dynamics_learning_rate,
             )
 
-            self.policy.log_ent_coef = SimpleNamespace()
+        self.policy.log_ent_coef = SimpleNamespace()
 
-            names = ['diagonal', 'explore']
-            ent_coefs = [self.ent_coef] * len(names)
-            self.policy.log_ent_coef = EntropyCoefModule(names, ent_coefs)
+        # names = ['diagonal', 'explore']
+        # ent_coefs = [self.ent_coef] * len(names)
+        # self.policy.log_ent_coef = EntropyCoefModule(names, ent_coefs)
 
-            self.policy.log_ent_coef.optimizer = th.optim.Adam(self.policy.log_ent_coef.parameters(), lr=self.ent_coef_lr)
-        
-        # self.policy.log_ent_coef.param = nn.Parameter(th.ones(1, device='cuda') * np.log(self.ent_coef), requires_grad=True).to("cuda")
-        # self.policy.log_ent_coef.optimizer = th.optim.Adam([self.policy.log_ent_coef.param],
-                                                            # lr=self.ent_coef_lr,
-        # )
+        # self.policy.log_ent_coef.optimizer = th.optim.Adam(self.policy.log_ent_coef.parameters(), lr=self.ent_coef_lr)
+    
+        self.policy.log_ent_coef.param = nn.Parameter(th.ones(1, device='cuda') * np.log(self.ent_coef), requires_grad=True).to("cuda")
+        self.policy.log_ent_coef.optimizer = th.optim.Adam([self.policy.log_ent_coef.param],
+                                                            lr=self.ent_coef_lr,
+        )
 
     def train(self) -> None:
         """
@@ -286,6 +287,7 @@ class PPO(OnPolicyAlgorithm):
         pg_losses, value_losses = [], []
         clip_fractions = []
 
+        entropies = []
         diagonal_entropies = []
         explore_entropies = []
 
@@ -362,15 +364,26 @@ class PPO(OnPolicyAlgorithm):
                         # else:
                         #     entropy_loss = -th.mean(self.ent_coef * entropy)
 
-                    entropy_loss = -th.mean(self.ent_coef * entropy)
+                    if self.target_entropy is not None:
+                        entropy_loss = -th.mean(self.policy.log_ent_coef.param.exp().detach() * entropy)
+                    else:
+                        entropy_loss = -th.mean(self.ent_coef * entropy)
+
+                        entropies.append(entropy.item())
 
                 else:
 
-                    if self.diagonal_entropy_when_touching:
+                    if self.diagonal_entropy == 'always':
                         diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy)
+                    elif self.diagonal_entropy == 'not_touch_hand':
+                        object_touching_hand = rollout_data.observations[:,-1] > 0.
+                        diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy[~object_touching_hand])
+                    elif self.diagonal_entropy == 'touch_table':
+                        object_touching_table = rollout_data.observations[:,-1] == 1.
+                        diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy[object_touching_table])
                     else:
-                        touching_object = rollout_data.observations[:,-1] > 0
-                        diagonal_entropy_loss = -self.ent_coef * th.mean(diagonal_entropy[~touching_object])
+                        print("diagonal_entropy invalid")
+                        exit()
                     explore_entropy_loss = -self.explore_ent_coef * th.mean(explore_entropy)
                     entropy_loss = diagonal_entropy_loss + explore_entropy_loss
 
@@ -404,6 +417,21 @@ class PPO(OnPolicyAlgorithm):
                 th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
                 self.policy.optimizer.step()
 
+                if self.target_entropy is not None and self.single_entropy is None:
+                    print("To use target_entropy, you need to set single_entropy to True")
+                    exit()
+                if self.target_entropy and self.single_entropy:
+
+                    self.policy.log_ent_coef.optimizer
+
+                    ent_coef_loss = self.policy.log_ent_coef.param * (explore_entropy.detach() - self.target_entropy).mean()
+                    self.policy.log_ent_coef.optimizer.zero_grad()
+                    ent_coef_loss.backward()
+                    # Clip grad norm
+                    if self.clip_grad_ent_coef:
+                        th.nn.utils.clip_grad_norm_(self.policy.log_ent_coef.param, self.max_grad_norm)
+                    self.policy.log_ent_coef.optimizer.step()
+
             if not continue_training:
                 break
 
@@ -416,6 +444,9 @@ class PPO(OnPolicyAlgorithm):
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/diagonal_entropy", np.mean(diagonal_entropies))
         self.logger.record("train/explore_entropy", np.mean(explore_entropies))
+        if self.target_entropy is not None:
+            self.logger.record("train/entropy", np.mean(entropies))
+            self.logger.record("train/ent_coeff", self.policy.log_ent_coef.param.exp().item())
         # self.logger.record("train/ent_coeff_explore", self.policy.log_ent_coef.params['explore'].exp().item())
         # self.logger.record("train/ent_coeff_diagonal", self.policy.log_ent_coef.params['diagonal'].exp().item())
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))

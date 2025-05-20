@@ -79,7 +79,8 @@ def objex_ppo_trainer(config, resume_model=None):
     # breakpoint()
 
     if resume_model:
-        model = OBJEX_PPO.load(resume_model, env)
+        model = OBJEX_PPO.load(resume_model,
+                               env)
         model._last_obs = None
         reset_num_timesteps = False
         total_timesteps -= model.num_timesteps
@@ -93,6 +94,7 @@ def objex_ppo_trainer(config, resume_model=None):
         policy_kwargs['standard_PPO']=config.agent.standard_PPO
         policy_kwargs['num_controlled_variables']=env.get_attr('num_controlled_variables')[0]
         policy_kwargs['use_gram_schmidt']=config.agent.params.use_gram_schmidt
+        policy_kwargs['diagonal_entropy']=config.agent.params.diagonal_entropy
         model = OBJEX_PPO(
                         ActorCriticPolicy, 
                         env, verbose=1, 
@@ -116,7 +118,7 @@ def objex_ppo_trainer(config, resume_model=None):
                         target_entropy=config.agent.params.target_entropy,
                         clip_grad_ent_coef=config.agent.params.clip_grad_ent_coef,
                         ent_coef_lr=config.agent.params.ent_coef_lr,
-                        diagonal_entropy_when_touching=config.agent.params.diagonal_entropy_when_touching,
+                        diagonal_entropy=config.agent.params.diagonal_entropy,
                         explore_ent_coef=config.agent.params.explore_ent_coef,
                         single_entropy=config.agent.single_entropy,
                         use_gram_schmidt=config.agent.params.use_gram_schmidt,

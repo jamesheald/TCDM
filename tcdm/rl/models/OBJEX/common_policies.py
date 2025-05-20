@@ -217,6 +217,7 @@ class BasePolicy(BaseModel):
                  use_tanh_bijector: bool,
                  num_controlled_variables: int,
                  standard_PPO: bool,
+                 diagonal_entropy: str,
                  **kwargs):
         super(BasePolicy, self).__init__(*args, **kwargs)
         self._squash_output = squash_output
@@ -225,6 +226,7 @@ class BasePolicy(BaseModel):
         self._use_tanh_bijector = use_tanh_bijector
         self._num_controlled_variables = num_controlled_variables
         self._standard_PPO = standard_PPO
+        self._diagonal_entropy = diagonal_entropy
 
     @staticmethod
     def _dummy_schedule(progress_remaining: float) -> float:
@@ -241,6 +243,11 @@ class BasePolicy(BaseModel):
     def standard_PPO(self) -> bool:
         """(bool) Getter for standard_PPO."""
         return self._standard_PPO
+
+    @property
+    def diagonal_entropy(self) -> str:
+        """(bool) Getter for diagonal_entropy."""
+        return self._diagonal_entropy
     
     @property
     def pi_and_Q_observations(self) -> List:
@@ -426,6 +433,7 @@ class ActorCriticPolicy(BasePolicy):
         ortho_init: bool = True,
         use_sde: bool = False,
         log_std_init: float = 0.0,
+        zlog_std_init: float = 0.0,
         full_std: bool = True,
         sde_net_arch: Optional[List[int]] = None,
         use_expln: bool = False,
@@ -469,6 +477,7 @@ class ActorCriticPolicy(BasePolicy):
 
         self.normalize_images = normalize_images
         self.log_std_init = log_std_init
+        self.zlog_std_init = zlog_std_init
         dist_kwargs = None
         # Keyword arguments for gSDE distribution
         if use_sde:
@@ -558,15 +567,7 @@ class ActorCriticPolicy(BasePolicy):
         if isinstance(self.action_dist, FullGaussianDistribution):
             # self.action_net, self.log_std, self.zlog_std = self.action_dist.proba_distribution_net(
             self.action_net, self.log_std = self.action_dist.proba_distribution_net(
-                latent_dim=latent_dim_pi, log_std_init=self.log_std_init
-            )
-        elif isinstance(self.action_dist, SwitchingGaussianDistribution):
-            self.action_net, self.log_std = self.action_dist.proba_distribution_net(
-                latent_dim=latent_dim_pi, log_std_init=self.log_std_init
-            )
-        elif isinstance(self.action_dist, MixtureGaussianDistribution):
-            self.action_net, self.log_std = self.action_dist.proba_distribution_net(
-                latent_dim=latent_dim_pi, log_std_init=self.log_std_init
+                latent_dim=latent_dim_pi, log_std_init=self.log_std_init, zlog_std_init=self.zlog_std_init,
             )
         elif isinstance(self.action_dist, DiagGaussianDistribution):
             self.action_net, self.log_std = self.action_dist.proba_distribution_net(
@@ -697,14 +698,23 @@ class ActorCriticPolicy(BasePolicy):
 
         # standard_PPO
 
-        touching_object = obs[:,-1] > 0
-        if touching_object.sum() == 0 or self.standard_PPO:
+        if self.diagonal_entropy == 'not_touch_hand':
+            explore_cond = obs[:,-1] > 0.
+        elif self.diagonal_entropy == 'touch_table':
+            explore_cond = obs[:,-1] == 0.
+        elif self.diagonal_entropy == 'always':
+            explore_cond = obs[:,-1] == 0.
+            # assume add low when touch_table == 0 for diagonal_entropy = 'always'
+            # print('need to write code for this, differentiate between when to turn on low rank and when to use diagonal entropy bonus')
+        # else:
+            # explore_cond = th.tensor(0.0, device=obs.device)
+        if explore_cond.sum() == 0 or self.standard_PPO:
             channel = []
         else:
             channel = self.get_synergies(mean_actions, obs, self.dynamics.model)
 
         if isinstance(self.action_dist, FullGaussianDistribution):
-            return self.action_dist.proba_distribution(mean_actions, zlog_std, log_std, channel, touching_object, self.log_std_init)
+            return self.action_dist.proba_distribution(mean_actions, zlog_std, log_std, channel, explore_cond, self.log_std_init, self.zlog_std_init)
         elif isinstance(self.action_dist, DiagGaussianDistribution):
             return self.action_dist.proba_distribution(mean_actions, self.log_std)
         elif isinstance(self.action_dist, CategoricalDistribution):
