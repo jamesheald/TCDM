@@ -357,19 +357,19 @@ class PPO(OnPolicyAlgorithm):
                 value_losses.append(value_loss.item())
 
                 if self.single_entropy or self.standard_PPO:
-
-                    # if entropy is None:
-                        #     # Approximate entropy when no analytical form
-                        #     entropy_loss = -th.mean(self.ent_coef * -log_prob)
-                        # else:
-                        #     entropy_loss = -th.mean(self.ent_coef * entropy)
-
-                    if self.target_entropy is not None:
-                        entropy_loss = -th.mean(self.policy.log_ent_coef.param.exp().detach() * entropy)
+                    
+                    if entropy is None: # Approximate entropy when no analytical form
+                        if self.target_entropy is not None:
+                            entropy_loss = -th.mean(self.policy.log_ent_coef.param.exp().detach() * -log_prob)
+                        else:
+                            entropy_loss = -th.mean(self.ent_coef * -log_prob)
+                        entropies.append(th.mean(-log_prob).item())
                     else:
-                        entropy_loss = -th.mean(self.ent_coef * entropy)
-
-                        entropies.append(entropy.item())
+                        if self.target_entropy is not None:
+                            entropy_loss = -th.mean(self.policy.log_ent_coef.param.exp().detach() * entropy)
+                        else:
+                            entropy_loss = -th.mean(self.ent_coef * entropy)
+                        entropies.append(th.mean(entropy).item())
 
                 else:
 
@@ -424,7 +424,10 @@ class PPO(OnPolicyAlgorithm):
 
                     self.policy.log_ent_coef.optimizer
 
-                    ent_coef_loss = self.policy.log_ent_coef.param * (explore_entropy.detach() - self.target_entropy).mean()
+                    if entropy is None: # Approximate entropy when no analytical form
+                        ent_coef_loss = self.policy.log_ent_coef.param * (-log_prob.detach() - self.target_entropy).mean()
+                    else:
+                        ent_coef_loss = self.policy.log_ent_coef.param * (entropy.detach() - self.target_entropy).mean()
                     self.policy.log_ent_coef.optimizer.zero_grad()
                     ent_coef_loss.backward()
                     # Clip grad norm

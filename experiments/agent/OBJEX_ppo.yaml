@@ -29,7 +29,7 @@ params:
   #   explore: -7
   ent_coef_lr: 1e-5
   clip_grad_ent_coef: True
-  use_tanh_bijector: False
+  use_tanh_bijector: True
   # diagonal_entropy_when_touching: True
   diagonal_entropy: not_touch_hand # always not_touch_hand touch_table
   explore_ent_coef: 0.001
