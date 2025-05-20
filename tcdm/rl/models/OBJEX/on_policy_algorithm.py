@@ -75,7 +75,7 @@ class Synergies(nn.Module):
         return synergies
 
     def forward(self, linearization_point, obs, dynamics):
-        synergies = vmap(self.get_synergies, in_dims=(0,0,None))(linearization_point, obs, dynamics)
+        synergies = vmap(self.get_synergies, in_dims=(0,0,None), randomness='different')(linearization_point, obs, dynamics)
         return synergies # [batch_size, action_dim, z_dim]
 
 class OnPolicyAlgorithm(BaseAlgorithm):
